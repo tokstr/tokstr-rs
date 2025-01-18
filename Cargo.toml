@@ -1,0 +1,26 @@
+[package]
+name = "tokstr-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+parking_lot = "0.12.3"
+tracing = "0.1.41"
+uuid = { version = "1.12.0", features = ["v4", "serde"] }
+tokio = { version = "1.43.0", features=["full"] }
+tracing-subscriber = { version="0.3.19", features=["env-filter"] }
+axum = "0.8.1"
+axum-server = "0.7.1"
+serde = { version = "1.0.217", features = ["derive"] }
+bytes = "1.9.0"
+futures-util = "0.3.31"
+tokio-util = "0.7.13"
+reqwest = "0.12.12"
+anyhow = "1.0.95"
+mp4parse = "0.17.0"
+mp4 = "0.14.0"
+image = "0.25.5"
+nostr-sdk = "0.38.0"
+async-trait = "0.1.85"
+serde_json = "1.0.135"
+ffmpeg-extractor = { path = "./src/ffmpeg-extractor" }

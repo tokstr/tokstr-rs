@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Video Download Dashboard (Hover Details)</title>
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-900">
+<div class="max-w-7xl mx-auto p-4">
+    <h1 class="text-3xl font-bold mb-4">Download & Stream Dashboard</h1>
+
+    <!-- Global stats bar -->
+    <div id="globalStats" class="mb-6 flex flex-col sm:flex-row sm:items-center sm:space-x-8 space-y-2 sm:space-y-0">
+        <div>
+            <span class="font-semibold">Total Speed:</span>
+            <span id="totalSpeed" class="text-blue-600">0 MB/s</span>
+        </div>
+        <div>
+            <span class="font-semibold">Total Downloaded Minutes:</span>
+            <span id="totalMinutes" class="text-blue-600">0 min</span>
+        </div>
+        <div>
+            <span class="font-semibold">Used/Max Storage:</span>
+            <span id="storageUsage" class="text-blue-600">—</span>
+        </div>
+        <div>
+            <span class="font-semibold">Current Index:</span>
+            <span id="currentIndex" class="text-blue-600">—</span>
+        </div>
+    </div>
+
+    <!-- Container for the dynamic queue -->
+    <div id="videoQueue" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+        <!-- Cards will be injected here by JavaScript -->
+    </div>
+</div>
+
+<script>
+    const VIDEO_QUEUE_ID = "videoQueue";
+    const STATUS_ENDPOINT = "/status";
+    const POLL_INTERVAL_MS = 2000;
+
+    // If you have a real thumbnail or live frame:
+    const PLACEHOLDER_IMAGE = "https://via.placeholder.com/320x568?text=Video";
+
+    document.addEventListener("DOMContentLoaded", () => {
+        fetchAndRenderStatus();
+        setInterval(fetchAndRenderStatus, POLL_INTERVAL_MS);
+    });
+
+    async function fetchAndRenderStatus() {
+        try {
+            const response = await fetch(STATUS_ENDPOINT);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            renderStatus(data);
+        } catch (error) {
+            console.error("Error fetching status:", error);
+        }
+    }
+
+    function renderStatus(statusData) {
+        // 1) Update global stats
+        updateGlobalStats(statusData);
+
+        // 2) Render the video cards
+        const container = document.getElementById(VIDEO_QUEUE_ID);
+        container.innerHTML = ""; // Clear old content
+
+        statusData.videos.forEach((video, idx) => {
+            // Calculate progress
+            let progressPercent = 0;
+            if (video.content_length && video.content_length > 0) {
+                progressPercent = Math.floor(
+                    (video.downloaded_bytes * 100) / video.content_length
+                );
+            } else {
+                // fallback if no content_length
+                if (video.local_path) {
+                    // fully downloaded
+                    progressPercent = 100;
+                } else if (video.downloading) {
+                    progressPercent = 0;
+                }
+            }
+            // Create DOM card
+            const card = createVideoCard(video, idx, statusData.current_index, progressPercent);
+            container.appendChild(card);
+        });
+    }
+
+    function updateGlobalStats(statusData) {
+        // total speed in MB/s
+        const speedMBs = statusData.total_download_speed_bps / (1024 * 1024);
+        document.getElementById("totalSpeed").textContent =
+            speedMBs.toFixed(2) + " MB/s";
+
+        // total downloaded minutes
+        const minutes = statusData.total_downloaded_minutes.toFixed(1);
+        document.getElementById("totalMinutes").textContent = minutes + " min";
+
+        // used/max storage
+        const used = (statusData.used_storage_bytes / (1024 * 1024)).toFixed(2);
+        const max = (statusData.max_storage_bytes / (1024 * 1024)).toFixed(2);
+        document.getElementById("storageUsage").textContent = `${used}MB / ${max}MB`;
+
+        // current index
+        document.getElementById("currentIndex").textContent = statusData.current_index;
+    }
+
+    function createVideoCard(video, idx, currentIndex, progressPercent) {
+        const THUMBNAIL_URL = `/thumbnail?index=${idx}`;
+
+        // Outer card
+        const cardOuter = document.createElement("div");
+        // We'll use "group" so that hovering can trigger the details overlay
+        cardOuter.className = "rounded-lg overflow-hidden shadow-md bg-white border flex flex-col items-center group relative";
+
+        // Image wrapper with smartphone-like dimensions
+        const previewWrapper = document.createElement("div");
+        previewWrapper.className = "relative w-[320px] h-[568px]";
+
+        // The thumbnail
+        const img = document.createElement("img");
+        img.src = THUMBNAIL_URL;
+        img.alt = "video thumbnail";
+        img.className = "w-full h-full object-cover";
+        img.onerror = () => {
+            img.src = PLACEHOLDER_IMAGE;
+        };
+        previewWrapper.appendChild(img);
+
+        // Overlays for progress, length, and size
+        const overlayDiv = document.createElement("div");
+        overlayDiv.className = "absolute bottom-2 left-2 flex flex-col space-y-1 bg-black/70 text-white px-2 py-1 rounded text-sm";
+
+        // Progress
+        const progressLine = document.createElement("div");
+        progressLine.textContent = `${progressPercent}%`;
+        overlayDiv.appendChild(progressLine);
+
+        // Video length (if known)
+        if (video.length_seconds) {
+            const lengthLine = document.createElement("div");
+            lengthLine.textContent = `Len: ${secToHMS(video.length_seconds)}`;
+            overlayDiv.appendChild(lengthLine);
+        }
+
+        // File size (if known)
+        if (video.content_length) {
+            const sizeMB = (video.content_length / (1024 * 1024)).toFixed(1);
+            const sizeLine = document.createElement("div");
+            sizeLine.textContent = `Size: ${sizeMB} MB`;
+            overlayDiv.appendChild(sizeLine);
+        }
+
+        previewWrapper.appendChild(overlayDiv);
+        cardOuter.appendChild(previewWrapper);
+
+        // -----------------------------------------------------------------------
+        // Metadata area at the bottom:
+        // 1) By default, it's short: "Hover for details (#X [if current])".
+        // 2) On hover, a popover with *all* metadata appears above videos below.
+        // -----------------------------------------------------------------------
+
+        // This bottom bar will remain visible
+        const bottomBar = document.createElement("div");
+        bottomBar.className = "w-full p-2 text-sm text-gray-600 bg-gray-100 text-center cursor-default";
+
+        // Show index, plus (CURRENT) if it is
+        bottomBar.textContent = `Hover for details (#${idx} ${idx === currentIndex ? 'CURRENT' : ''})`;
+        cardOuter.appendChild(bottomBar);
+
+        // Full metadata pop-up (hidden by default, appears on hover)
+        const metaPopup = document.createElement("div");
+        metaPopup.className = `
+            absolute
+            z-50
+            bottom-0
+            left-0
+            w-full
+            transform
+            translate-y-full
+            bg-white
+            border
+            border-gray-200
+            shadow-lg
+            p-2
+            opacity-0
+            pointer-events-none
+            group-hover:opacity-100
+            group-hover:pointer-events-auto
+            transition
+        `;
+
+        // We'll collect all lines in here
+        const metaLines = [];
+
+        // # + current index
+        metaLines.push(`#${idx}${idx === currentIndex ? ' (CURRENT)' : ''}`);
+
+        // resolution
+        if (video.width && video.height) {
+            metaLines.push(`Resolution: ${video.width}x${video.height}`);
+        }
+
+        // format
+        if (video.format) {
+            metaLines.push(`Format: ${video.format}`);
+        }
+
+        // download speed
+        if (video.download_speed_bps) {
+            const speedMB = video.download_speed_bps / (1024 * 1024);
+            metaLines.push(`Speed: ${speedMB.toFixed(2)} MB/s`);
+        }
+
+        // local path
+        if (video.local_path) {
+            metaLines.push(`Local Path: ${video.local_path}`);
+        }
+
+        // More lines if you want...
+        metaLines.forEach(line => {
+            const div = document.createElement("div");
+            div.textContent = line;
+            metaPopup.appendChild(div);
+        });
+
+        cardOuter.appendChild(metaPopup);
+
+        return cardOuter;
+    }
+
+    // Utility: Convert seconds to hh:mm:ss
+    function secToHMS(sec) {
+        sec = Math.floor(sec);
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        const s = sec % 60;
+        return [h, m, s].map(v => (v < 10 ? "0" + v : v)).join(":");
+    }
+</script>
+</body>
+</html>
