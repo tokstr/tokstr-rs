@@ -4,6 +4,9 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoDownload {
+    /// Unique ID for referencing
+    pub id: Uuid,
+    
     /// Original URL of the video
     pub url: String,
 
@@ -13,8 +16,6 @@ pub struct VideoDownload {
     /// Whether we are currently downloading
     pub downloading: bool,
 
-    /// Unique ID for referencing
-    pub video_id: Uuid,
 
     /// Video length in seconds (if known)
     pub length_seconds: Option<f64>,

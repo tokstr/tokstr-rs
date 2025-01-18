@@ -15,10 +15,10 @@ pub struct Video {
 impl Video {
     pub fn to_download(&self) -> VideoDownload {
        VideoDownload{
+           id: Default::default(),
            url: self.url.clone(),
            local_path: None,
            downloading: false,
-           video_id: Default::default(),
            length_seconds: None,
            format: None,
            width: None,

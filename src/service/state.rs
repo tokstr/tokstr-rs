@@ -1,11 +1,13 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use crate::discovery::fetchers::ContentDiscovery;
 use crate::models::models::VideoDownload;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
     /// List of videos in watch order
-    pub videos: Arc<Mutex<Vec<VideoDownload>>>,
+    pub content_discovery: Arc<Mutex<ContentDiscovery>>,
+    pub discovered_videos: Arc<Mutex<Vec<VideoDownload>>>,
 
     /// Concurrency settings
     pub max_downloads: usize,
@@ -22,14 +24,15 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(
-        videos: Vec<VideoDownload>,
+        content_discovery: ContentDiscovery,
         max_downloads: usize,
         max_ahead: usize,
         max_behind_seconds: u64,
         max_storage_bytes: u64,
     ) -> Self {
         Self {
-            videos: Arc::new(Mutex::new(videos)),
+            content_discovery: Arc::new(Mutex::new(content_discovery)),
+            discovered_videos: Arc::new(Mutex::new(vec![])),
             max_downloads,
             max_ahead,
             max_behind_seconds,

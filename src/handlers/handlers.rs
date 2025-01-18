@@ -12,7 +12,7 @@ use std::{io::SeekFrom};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
-use crate::app::state::AppState;
+use crate::service::state::AppState;
 use crate::models::models::VideoDownload;
 
 #[derive(Debug, Deserialize)]
@@ -30,7 +30,7 @@ pub async fn stream_video(
 ) -> Result<Response, StatusCode> {
     let index = query.index;
     let maybe_path = {
-        let list = state.videos.lock().await;
+        let list = state.discovered_videos.lock().await.to_vec();
         list.get(index).and_then(|v| v.local_path.clone())
     };
 
@@ -134,7 +134,7 @@ pub struct StatusResponse {
 
 /// Returns JSON status of the system.
 pub async fn get_status(State(state): State<AppState>) -> impl IntoResponse {
-    let list = state.videos.lock().await;
+    let list = state.discovered_videos.lock().await.to_vec();
     let current_idx = *state.current_index.lock().await;
     let used_storage = *state.current_storage_bytes.lock().await;
 
@@ -192,7 +192,7 @@ pub async fn get_thumbnail(
     let index = query.index;
 
     let maybe_thumb = {
-        let list = state.videos.lock().await;
+        let list = state.discovered_videos.lock().await.to_vec();
         list.get(index)
             .and_then(|v| v.thumbnail_path.clone())
     };
