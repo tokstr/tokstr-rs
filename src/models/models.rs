@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use uuid::Uuid;
 use crate::discovery::models::NostrVideo;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

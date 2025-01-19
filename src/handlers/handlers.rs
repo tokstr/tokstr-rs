@@ -9,6 +9,8 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{io::SeekFrom};
+use std::sync::Arc;
+use axum::response::Html;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
@@ -24,7 +26,7 @@ pub struct VideoQuery {
 ///
 /// Example usage: GET /video.mp4?index=0
 pub async fn stream_video(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Query(query): Query<VideoQuery>,
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
@@ -133,7 +135,7 @@ pub struct StatusResponse {
 }
 
 /// Returns JSON status of the system.
-pub async fn get_status(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse{
     let list = state.discovered_videos.lock().await.to_vec();
     let current_idx = *state.current_index.lock().await;
     let used_storage = *state.current_storage_bytes.lock().await;
@@ -171,7 +173,7 @@ pub struct SetIndexRequest {
 }
 
 pub async fn set_index(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(payload): Json<SetIndexRequest>,
 ) -> impl IntoResponse {
     let mut idx = state.current_index.lock().await;
@@ -186,7 +188,7 @@ pub struct ThumbnailQuery {
 }
 
 pub async fn get_thumbnail(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Query(query): Query<ThumbnailQuery>,
 ) -> Result<Response, StatusCode> {
     let index = query.index;
@@ -212,4 +214,9 @@ pub async fn get_thumbnail(
         .header("Content-Type", "image/jpeg")
         .body(Body::from(data))
         .unwrap())
+}
+
+
+pub async fn dashboard(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
+    Html(include_str!("../dashboard/dashboard.html"))
 }

@@ -1,23 +1,25 @@
 use std::net::SocketAddr;
-// src/main_axum.rs
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use anyhow::Result; // or your error type of choice
+use anyhow::Result;
 
-use axum::{Router};
+use axum::{Router, ServiceExt};
+use axum::routing::{get, post};
 use crate::discovery::fetchers::ContentDiscovery;
 use crate::download::manager::DownloadManager;
 use crate::service::state::AppState;
 use tracing::{info, Level};
 use tracing_subscriber::{fmt, EnvFilter};
+use crate::handlers::handlers::{dashboard, get_status, get_thumbnail, set_index, stream_video};
 
-// A function that starts Axum, returns (address, Arc<AppState>)
 pub async fn start_axum_server(address: Option<String>) -> Result<(String, Arc<AppState>)> {
     let env_filter = EnvFilter::from_default_env()
         .add_directive(Level::DEBUG.into())
         .add_directive("mp4parse=off".parse().unwrap());
 
-    fmt().with_env_filter(env_filter).init();
+    fmt()
+        .with_env_filter(env_filter)
+        .init();
 
     let addr_str = address.unwrap_or_else(|| "127.0.0.1:3000".to_string());
     let addr = addr_str.parse().expect("Invalid address");
@@ -39,6 +41,8 @@ pub async fn start_axum_server(address: Option<String>) -> Result<(String, Arc<A
         60,                        // max_behind_seconds
         1024 * 1024 * 1024,        // max_storage_bytes
     );
+
+    // Wrap in an Arc
     let shared_state = Arc::new(state);
 
     // Start the download manager in background
@@ -49,14 +53,14 @@ pub async fn start_axum_server(address: Option<String>) -> Result<(String, Arc<A
 
     // Build the router
     let app = Router::new()
-        // .route("/dashboard", get(dashboard)) // If you have a dashboard
-        // .route("/video.mp4", get(stream_video)) // etc.
-        // .with_state(shared_state.clone())
-        // ...
-        .with_state(shared_state.clone());
+        .route("/dashboard", get(dashboard))
+        .route("/video.mp4", get(stream_video))
+        .route("/status", get(get_status))
+        .route("/set_index", post(set_index))
+        .route("/thumbnail", get(get_thumbnail))
+        .with_state(shared_state.clone()); // shared_state is Arc<AppState>
 
-
-    // Spawn Axum server in background
+    // Spawn Axum server in the background
     tokio::spawn(async move {
         axum_server::Server::bind(SocketAddr::V4(addr))
             .serve(app.into_make_service())

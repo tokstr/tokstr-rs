@@ -23,12 +23,10 @@ use tracing_subscriber::{EnvFilter};
 use crate::service::state::AppState;
 use crate::discovery::fetchers::{ContentDiscovery};
 use crate::download::manager::DownloadManager;
-use crate::handlers::handlers::{get_status, get_thumbnail, set_index, stream_video};
+use crate::handlers::handlers::{dashboard, get_status, get_thumbnail, set_index, stream_video};
 use crate::models::models::VideoDownload;
 
-async fn dashboard() -> Html<&'static str> {
-    Html(include_str!("dashboard/dashboard.html"))
-}
+
 
 #[tokio::main]
 async fn main() {
@@ -59,8 +57,9 @@ async fn main() {
         1024 * 1024 * 1024,
     );
 
+    let state_shared = Arc::new(state);
     // Start the DownloadManager in the background
-    let manager = DownloadManager::new(Arc::from(state.clone()));
+    let manager = DownloadManager::new(state_shared.clone());
     tokio::spawn(async move {
         manager.run().await;
     });
@@ -72,7 +71,7 @@ async fn main() {
         .route("/status", get(get_status))
         .route("/set_index", post(set_index))
         .route("/thumbnail", get(get_thumbnail))
-        .with_state(state.clone());
+        .with_state(state_shared.clone());
 
     let addr = "127.0.0.1:3000".parse().unwrap();
     info!("Listening on http://{}", addr);

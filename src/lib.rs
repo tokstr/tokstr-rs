@@ -1,6 +1,3 @@
-mod main_axum;
-
-
 mod discovery;
 mod service;
 mod handlers;
