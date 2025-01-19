@@ -8,6 +8,7 @@ build = "build.rs"
 [build-dependencies]
 bindgen = "0.71.1"
 cc = "1.0"
+ffmpeg-next = "7.1.0"
 
 [lib]
 name = "ffmpeg_extractor"
