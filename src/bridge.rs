@@ -11,7 +11,6 @@ use crate::service::state::AppState;
 static GLOBAL_STATE: OnceCell<Arc<AppState>> = OnceCell::new();
 
 // 2) Define an FFI-safe struct that mirrors `VideoDownload`
-#[frb(mirror(VideoDownload))] // if you want automatic bridging of fields
 #[derive(Debug, Clone)]
 pub struct FfiVideoDownload {
     pub id: String,
