@@ -6,18 +6,18 @@ fn main() {
     let target = env::var("TARGET").unwrap();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // We will eventually store the C flags (include paths, etc.) we want to pass to cc and bindgen:
-    let mut cflags: Vec<String> = vec![];
+    // Where your precompiled FFmpeg is located, e.g. "3rd-party/ffmpeg-libs/"
+    // If not set, defaults to "3rd-party/ffmpeg-libs".
+    let ffmpeg_libs_path = env::var("FFMPEG_LIBS_PATH")
+        .unwrap_or_else(|_| "3rd-party/ffmpeg-libs".to_string());
 
-    // Are we cross-compiling for Android?
+    // Determine if we're on Android by checking the target triple
     let is_android = target.contains("android");
+    // We may or may not want to handle non-Android separately
+    // but here we assume you're primarily targeting Android.
 
     if is_android {
-        // ------------------------------------------------------
-        // 1) ANDROID: Use precompiled static FFmpeg libraries
-        // ------------------------------------------------------
-
-        // Map Rust target -> FFmpeg-libs subfolder
+        // Map the Rust target triple to the correct FFmpeg subfolder
         let arch_subdir = if target.contains("aarch64") {
             "arm64-v8a"
         } else if target.contains("armv7") {
@@ -30,104 +30,110 @@ fn main() {
             panic!("Unsupported Android target: {}", target);
         };
 
-        // Check if the user specified a custom path in the env var
-        let ffmpeg_base = match env::var("FFMPEG_LIBS_PATH") {
-            Ok(path) => PathBuf::from(path),
-            Err(_) => {
-                // Fallback to local "ffmpeg-libs" if not set
-                PathBuf::from("ffmpeg-libs")
-            }
-        };
+        let ffmpeg_include_dir = PathBuf::from(&ffmpeg_libs_path).join(arch_subdir).join("include");
+        let ffmpeg_lib_dir = PathBuf::from(&ffmpeg_libs_path).join(arch_subdir).join("lib");
 
-        let ffmpeg_lib_dir = ffmpeg_base.join(arch_subdir);
-
-        // Instruct Cargo to look in that directory for static libraries
+        // Tell Cargo (rustc) where to find the .a files
         println!("cargo:rustc-link-search=native={}", ffmpeg_lib_dir.display());
 
-        // Statically link to each relevant FFmpeg component (add/remove as needed):
-        println!("cargo:rustc-link-lib=static=avformat");
+        // Link all the FFmpeg libraries you need, statically
+        // (Adjust as needed if you don't need all)
         println!("cargo:rustc-link-lib=static=avcodec");
+        println!("cargo:rustc-link-lib=static=avdevice");
+        println!("cargo:rustc-link-lib=static=avfilter");
+        println!("cargo:rustc-link-lib=static=avformat");
         println!("cargo:rustc-link-lib=static=avutil");
+        println!("cargo:rustc-link-lib=static=postproc");
+        println!("cargo:rustc-link-lib=static=swresample");
         println!("cargo:rustc-link-lib=static=swscale");
 
-        // If FFmpeg depends on other libraries (e.g., zlib, x264, etc.), add them:
-        // println!("cargo:rustc-link-lib=static=x264");
-        // println!("cargo:rustc-link-lib=static=z");
-
-        // For Android, you typically need to link the "log" library:
+        // Usually required on Android to link the system log library
         println!("cargo:rustc-link-lib=log");
 
-        // If you have custom include paths for FFmpeg headers, you can add:
-        // cflags.push("-I/path/to/ffmpeg/include".to_string());
+        // ------------------------------------------------
+        //  Compile your C code for Android
+        // ------------------------------------------------
+        let mut build = cc::Build::new();
+        build
+            .file("c_src/extract_jpeg_frame.c")
+            // Add the path to the FFmpeg "include" directory
+            .include("c_src")
+            .include(ffmpeg_include_dir.clone())  // important so <libavcodec/avcodec.h> is found
+        ;
 
+        // If you need extra flags, e.g. build.flag("-DWHATEVER");
+        // build.flag("-DANDROID");
+
+        build.compile("extractframe");
+
+        // ------------------------------------------------
+        //  Run bindgen to generate Rust FFI
+        // ------------------------------------------------
+        let mut bindings = bindgen::Builder::default()
+            .header("c_src/wrapper.h")
+            .clang_args(&[
+                // Pass the -I flag to Clang so it finds <libavcodec/avcodec.h> in that include dir
+                format!("-I{}", ffmpeg_include_dir.display()),
+            ])
+            // This ensures Cargo rebuilds if files in c_src change
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+
+        let bindings = bindings
+            .generate()
+            .expect("Unable to generate FFmpeg bindings via bindgen");
+
+        bindings
+            .write_to_file(out_dir.join("bindings.rs"))
+            .expect("Couldn't write bindings!");
     } else {
-        // ------------------------------------------------------
-        // 2) NON-ANDROID (e.g., Desktop) -> Use pkg-config
-        // ------------------------------------------------------
-
-        // Attempt to read from pkg-config, ignoring errors if not found
-        let ffmpeg_cflags = Command::new("pkg-config")
-            .args(&["--cflags", "libavformat", "libavcodec", "libavutil", "libswscale"])
-            .output()
-            .ok()
-            .map(|out| String::from_utf8(out.stdout).unwrap())
-            .unwrap_or_default();
-
-        let ffmpeg_libs = Command::new("pkg-config")
-            .args(&["--libs", "libavformat", "libavcodec", "libavutil", "libswscale"])
-            .output()
-            .ok()
-            .map(|out| String::from_utf8(out.stdout).unwrap())
-            .unwrap_or_default();
-
-        // Add cflags to our vector
-        for flag in ffmpeg_cflags.split_whitespace() {
-            cflags.push(flag.to_string());
-        }
-
-        // Instruct Cargo how to link
-        for lib_arg in ffmpeg_libs.split_whitespace() {
-            if lib_arg.starts_with("-l") {
-                // e.g. "-lavcodec" -> "avcodec"
-                println!("cargo:rustc-link-lib={}", &lib_arg[2..]);
-            } else if lib_arg.starts_with("-L") {
-                // e.g. "-L/some/dir"
-                println!("cargo:rustc-link-search=native={}", &lib_arg[2..]);
-            }
-        }
+        // If you do want to handle non-Android (e.g. desktop) with pkg-config:
+        // (Optional section - remove if irrelevant)
+        fallback_pkg_config_build();
     }
+}
 
-    // ------------------------------------------------------
-    // 3) Compile your C code
-    // ------------------------------------------------------
+fn fallback_pkg_config_build() {
+    // Example: we just do something naive with pkg-config.
+    let ffmpeg_cflags = Command::new("pkg-config")
+        .args(["--cflags", "libavformat", "libavcodec", "libavutil", "libswscale"])
+        .output()
+        .ok()
+        .map(|out| String::from_utf8(out.stdout).unwrap())
+        .unwrap_or_default();
 
+    let ffmpeg_libs = Command::new("pkg-config")
+        .args(["--libs", "libavformat", "libavcodec", "libavutil", "libswscale"])
+        .output()
+        .ok()
+        .map(|out| String::from_utf8(out.stdout).unwrap())
+        .unwrap_or_default();
+
+    // Compile your C code (desktop scenario)
     let mut build = cc::Build::new();
-    build
-        .file("c_src/extract_jpeg_frame.c")
-        .include("c_src"); // local includes
+    build.file("c_src/extract_jpeg_frame.c").include("c_src");
 
-    // If you have additional `.c` files, add them here:
-    // build.file("c_src/another_file.c");
-
-    // Add each cflag individually
-    for cflag in &cflags {
-        build.flag(cflag);
+    for flag in ffmpeg_cflags.split_whitespace() {
+        build.flag(flag);
     }
-
-    // Now compile
     build.compile("extractframe");
 
-    // ------------------------------------------------------
-    // 4) Run bindgen to generate Rust FFI
-    // ------------------------------------------------------
-    // We pass along any cflags that matter for finding FFmpeg headers, etc.
+    // Link
+    for lib_arg in ffmpeg_libs.split_whitespace() {
+        if lib_arg.starts_with("-l") {
+            println!("cargo:rustc-link-lib={}", &lib_arg[2..]);
+        } else if lib_arg.starts_with("-L") {
+            println!("cargo:rustc-link-search=native={}", &lib_arg[2..]);
+        }
+    }
+
+    // bindgen
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let bindings = bindgen::Builder::default()
         .header("c_src/wrapper.h")
-        .clang_args(&cflags)
+        .clang_args(ffmpeg_cflags.split_whitespace())
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
         .expect("Unable to generate bindings from wrapper.h");
-
     bindings
         .write_to_file(out_dir.join("bindings.rs"))
         .expect("Couldn't write bindings!");
