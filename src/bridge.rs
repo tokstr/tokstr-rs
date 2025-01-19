@@ -16,7 +16,7 @@ static GLOBAL_STATE: OnceCell<Arc<AppState>> = OnceCell::new();
 pub struct FfiVideoDownload {
     pub id: String,
     pub url: String,
-    // add more fields as needed
+    pub title: Option<String>,
 }
 
 /// Start the Axum server and store the AppState in GLOBAL_STATE.
@@ -49,6 +49,7 @@ pub async fn ffi_get_discovered_videos() -> Vec<FfiVideoDownload> {
         .map(|vid: &VideoDownload| FfiVideoDownload {
             id: vid.id.to_string(),
             url: vid.url.clone(),
+            title: Some(vid.nostr.title.clone()),
         })
         .collect()
 }

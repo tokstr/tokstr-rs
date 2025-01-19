@@ -1,14 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
+use crate::discovery::models::NostrVideo;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoDownload {
     /// Unique ID for referencing
-    pub id: Uuid,
-    
+    pub id: String,
+
     /// Original URL of the video
     pub url: String,
+
+    pub nostr: NostrVideo,
 
     /// Local path where the file is stored (if downloaded)
     pub local_path: Option<PathBuf>,
@@ -40,4 +43,26 @@ pub struct VideoDownload {
     pub last_speed_update_bytes: u64,
 
     pub thumbnail_path: Option<PathBuf>,
+}
+
+impl VideoDownload {
+    pub fn from_nostr_video(nostr: NostrVideo) -> Self {
+        Self {
+            id: nostr.id.clone(),
+            url: nostr.url.clone(),
+            nostr,
+            local_path: None,
+            downloading: false,
+            length_seconds: None,
+            format: None,
+            width: None,
+            height: None,
+            downloaded_bytes: 0,
+            content_length: None,
+            download_speed_bps: 0.0,
+            last_speed_update_instant: None,
+            last_speed_update_bytes: 0,
+            thumbnail_path: None,
+        }
+    }
 }

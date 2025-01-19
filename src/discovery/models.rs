@@ -1,7 +1,7 @@
-use crate::models::models::VideoDownload;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
-pub struct Video {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NostrVideo {
     pub id: String,
     pub user: UserData,
     pub title: String,
@@ -12,27 +12,7 @@ pub struct Video {
 }
 
 
-impl Video {
-    pub fn to_download(&self) -> VideoDownload {
-       VideoDownload{
-           id: Default::default(),
-           url: self.url.clone(),
-           local_path: None,
-           downloading: false,
-           length_seconds: None,
-           format: None,
-           width: None,
-           height: None,
-           downloaded_bytes: 0,
-           content_length: None,
-           download_speed_bps: 0.0,
-           last_speed_update_instant: None,
-           last_speed_update_bytes: 0,
-           thumbnail_path: None,
-       }
-    }
-}
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserData {
     pub npub: Option<String>,
     pub name: Option<String>,

@@ -46,7 +46,7 @@ impl DownloadManager {
         // 2) Convert each to VideoDownload (if your `Video` has a `to_download()` method)
         let mut discovered = self.state.discovered_videos.lock().await;
         for video in new_videos {
-            discovered.push(video.to_download());
+            discovered.push(VideoDownload::from_nostr_video(video));
         }
     }
 

@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use nostr_sdk::prelude::*;
 use url::Url;
 
-use crate::discovery::models::{UserData, Video, VideoVariant};
+use crate::discovery::models::{UserData, NostrVideo, VideoVariant};
 
 /// A module containing all parsing-related code.
 /// We could also structure it as a struct with methods, but here's a simple approach.
-pub fn parse_event_as_video(event: &Event) -> Vec<Video> {
+pub fn parse_event_as_video(event: &Event) -> Vec<NostrVideo> {
     // 1) Gather all video variants from the event tags
     let video_variants = parse_video_variants(event);
 
@@ -16,7 +16,7 @@ pub fn parse_event_as_video(event: &Event) -> Vec<Video> {
         if let (Some(hash), Some(url)) = (&variant.hash, &variant.url) {
             if is_valid_http_url(url) {
                 let user_npub = event.pubkey.to_bech32().ok();
-                videos.push(Video {
+                videos.push(NostrVideo {
                     id: hash.clone(),
                     user: UserData {
                         npub: user_npub,

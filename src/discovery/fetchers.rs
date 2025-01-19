@@ -13,14 +13,14 @@ use tokio::sync::{
     Mutex,
 };
 
-use crate::discovery::models::{UserData, Video};
+use crate::discovery::models::{UserData, NostrVideo};
 use crate::discovery::parsers::{parse_event_as_video, parse_user_metadata};
 
 #[derive(Debug)]
 pub struct ContentDiscovery {
     client: Client,
     _video_subscription_id: SubscriptionId,
-    video_receiver: UnboundedReceiver<Video>,
+    video_receiver: UnboundedReceiver<NostrVideo>,
 
     /// In-memory map of "author bech32 => user metadata".
     /// We store it so we only fetch each author’s metadata once.
@@ -48,7 +48,7 @@ impl ContentDiscovery {
         let video_subscription_id = subscription_output.val;
 
         // 4) Set up a channel for “finished” videos
-        let (video_sender, video_receiver) = mpsc::unbounded_channel::<Video>();
+        let (video_sender, video_receiver) = mpsc::unbounded_channel::<NostrVideo>();
 
         // 5) Shared cache for metadata
         let known_authors = Arc::new(Mutex::new(HashMap::new()));
@@ -110,7 +110,7 @@ impl ContentDiscovery {
         client: &Client,
         npub_str: &str,
         known_authors_bg: &Arc<Mutex<HashMap<String, UserData>>>,
-        video: &mut Video,
+        video: &mut NostrVideo,
     ) {
         // Already have user in cache?
         let cached = {
@@ -156,7 +156,7 @@ impl ContentDiscovery {
     /// Fetch newly discovered “videos” that have *already* been enriched
     /// with the author’s metadata. Because we drain `video_receiver`,
     /// each returned `Video` is new (no duplication).
-    pub fn fetch_new_videos(&mut self) -> Vec<Video> {
+    pub fn fetch_new_videos(&mut self) -> Vec<NostrVideo> {
         let mut result = Vec::new();
         while let Ok(video) = self.video_receiver.try_recv() {
             result.push(video);
