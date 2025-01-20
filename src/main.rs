@@ -25,18 +25,11 @@ use crate::discovery::fetchers::{ContentDiscovery};
 use crate::download::manager::DownloadManager;
 use crate::handlers::handlers::{dashboard, get_status, get_thumbnail, set_index, stream_video};
 use crate::models::models::VideoDownload;
-
-
+use crate::utils::log::init_logger_once;
 
 #[tokio::main]
 async fn main() {
-    let env_filter = EnvFilter::from_default_env()
-        .add_directive(Level::DEBUG.into())
-        .add_directive("mp4parse=off".parse().unwrap());
-
-    fmt()
-        .with_env_filter(env_filter)
-        .init();
+    init_logger_once();
 
 
     let relays = vec![

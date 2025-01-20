@@ -11,15 +11,10 @@ use crate::service::state::AppState;
 use tracing::{info, Level};
 use tracing_subscriber::{fmt, EnvFilter};
 use crate::handlers::handlers::{dashboard, get_status, get_thumbnail, set_index, stream_video};
+use crate::utils::log::init_logger_once;
 
 pub async fn start_axum_server(address: Option<String>) -> Result<(String, Arc<AppState>)> {
-    let env_filter = EnvFilter::from_default_env()
-        .add_directive(Level::DEBUG.into())
-        .add_directive("mp4parse=off".parse().unwrap());
-
-    fmt()
-        .with_env_filter(env_filter)
-        .init();
+    init_logger_once();
 
     let addr_str = address.unwrap_or_else(|| "127.0.0.1:3000".to_string());
     let addr = addr_str.parse().expect("Invalid address");
