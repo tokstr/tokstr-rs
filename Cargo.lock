@@ -1036,6 +1036,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "ghostr-rs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "axum-server",
+ "bytes",
+ "ffmpeg-extractor",
+ "flutter_rust_bridge",
+ "futures-util",
+ "image",
+ "mp4",
+ "mp4parse",
+ "nostr-sdk",
+ "once_cell",
+ "openssl",
+ "parking_lot",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "gif"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3007,35 +3036,6 @@ dependencies = [
  "futures-sink",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "tokstr-rs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "axum-server",
- "bytes",
- "ffmpeg-extractor",
- "flutter_rust_bridge",
- "futures-util",
- "image",
- "mp4",
- "mp4parse",
- "nostr-sdk",
- "once_cell",
- "openssl",
- "parking_lot",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
