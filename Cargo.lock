@@ -1048,6 +1048,7 @@ dependencies = [
  "flutter_rust_bridge",
  "futures-util",
  "image",
+ "log",
  "mp4",
  "mp4parse",
  "nostr-sdk",

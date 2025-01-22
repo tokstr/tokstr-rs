@@ -2,7 +2,7 @@ use std::sync::Arc;
 use once_cell::sync::OnceCell;
 
 use flutter_rust_bridge::frb;
-
+use log::info;
 use crate::service::main_axum::start_axum_server;
 use crate::models::models::VideoDownload;
 use crate::service::state::AppState;
@@ -21,8 +21,11 @@ pub struct FfiVideoDownload {
 /// Start the Axum server and store the AppState in GLOBAL_STATE.
 /// Return the bound address as a String.
 #[frb]
-pub async fn ffi_start_server(address: Option<String>) -> String {
-    match start_axum_server(address).await {
+pub async fn ffi_start_server(
+    max_parallel_downloads: usize,
+    max_storage_bytes: u64,
+    address: Option<String>) -> String {
+    match start_axum_server(max_parallel_downloads, max_storage_bytes, address).await {
         Ok((addr, state)) => {
             // Store the Arc<AppState> in the static if not already set
             // (Usually you'd only call this function once.)
@@ -43,6 +46,7 @@ pub async fn ffi_get_discovered_videos() -> Vec<FfiVideoDownload> {
 
     // Lock the discovered_videos
     let discovered = app_state.discovered_videos.lock().await;
+    info!("Discovered videos: {:?}", discovered);
     discovered
         .iter()
         .map(|vid: &VideoDownload| FfiVideoDownload {

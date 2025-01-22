@@ -12,7 +12,10 @@ use tracing::{info, Level};
 use tracing_subscriber::{fmt, EnvFilter};
 use crate::handlers::handlers::{dashboard, get_status, get_thumbnail, set_index, stream_video};
 
-pub async fn start_axum_server(address: Option<String>) -> Result<(String, Arc<AppState>)> {
+pub async fn start_axum_server(
+    max_parallel_downloads: usize,
+    max_storage_bytes: u64,
+    address: Option<String>) -> Result<(String, Arc<AppState>)> {
     let addr_str = address.unwrap_or_else(|| "127.0.0.1:3000".to_string());
     let addr = addr_str.parse().expect("Invalid address");
 
@@ -28,10 +31,10 @@ pub async fn start_axum_server(address: Option<String>) -> Result<(String, Arc<A
     // Create the global service state
     let state = AppState::new(
         api,
-        2,                         // max_downloads
+        max_parallel_downloads,                         // max_downloads
         2,                         // max_ahead
         60,                        // max_behind_seconds
-        1024 * 1024 * 1024,        // max_storage_bytes
+        max_storage_bytes,        // max_storage_bytes
     );
 
     // Wrap in an Arc

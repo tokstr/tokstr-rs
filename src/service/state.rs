@@ -10,7 +10,7 @@ pub struct AppState {
     pub discovered_videos: Arc<Mutex<Vec<VideoDownload>>>,
 
     /// Concurrency settings
-    pub max_downloads: usize,
+    pub max_parallel_downloads: usize,
     pub max_ahead: usize,
     pub max_behind_seconds: u64,
 
@@ -25,7 +25,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(
         content_discovery: ContentDiscovery,
-        max_downloads: usize,
+        max_parallel_downloads: usize,
         max_ahead: usize,
         max_behind_seconds: u64,
         max_storage_bytes: u64,
@@ -33,7 +33,7 @@ impl AppState {
         Self {
             content_discovery: Arc::new(Mutex::new(content_discovery)),
             discovered_videos: Arc::new(Mutex::new(vec![])),
-            max_downloads,
+            max_parallel_downloads: max_parallel_downloads,
             max_ahead,
             max_behind_seconds,
             max_storage_bytes,

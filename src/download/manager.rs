@@ -89,7 +89,7 @@ impl DownloadManager {
         let mut concurrent_downloads = videos.iter().filter(|v| v.downloading).count();
 
         for (idx, video) in videos.iter_mut().enumerate().skip(current_idx) {
-            if concurrent_downloads >= self.state.max_downloads {
+            if concurrent_downloads >= self.state.max_parallel_downloads {
                 break;
             }
 
