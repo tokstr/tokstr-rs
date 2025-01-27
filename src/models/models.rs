@@ -7,6 +7,9 @@ pub struct VideoDownload {
     /// Unique ID for referencing
     pub id: String,
 
+    /// Score: higher is better
+    pub score: f64,
+
     /// Original URL of the video
     pub url: String,
 
@@ -40,14 +43,15 @@ pub struct VideoDownload {
     // Keep track of how many bytes had been downloaded last time we measured.
     #[serde(skip_serializing, skip_deserializing)]
     pub last_speed_update_bytes: u64,
-
     pub thumbnail_path: Option<PathBuf>,
+    pub last_played: Option<u64>,
 }
 
 impl VideoDownload {
     pub fn from_nostr_video(nostr: NostrVideo) -> Self {
         Self {
             id: nostr.id.clone(),
+            score: 0.0,
             url: nostr.url.clone(),
             nostr,
             local_path: None,
@@ -62,6 +66,7 @@ impl VideoDownload {
             last_speed_update_instant: None,
             last_speed_update_bytes: 0,
             thumbnail_path: None,
+            last_played: None,
         }
     }
 }

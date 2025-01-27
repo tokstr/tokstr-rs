@@ -1,15 +1,15 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use anyhow::Result;
 
-use axum::{Router, ServiceExt};
+use axum::{Router};
 use axum::routing::{get, post};
+use nostr_sdk::Client;
+use tokio::sync::Mutex;
 use crate::discovery::fetchers::ContentDiscovery;
 use crate::download::manager::DownloadManager;
 use crate::service::state::AppState;
-use tracing::{info, Level};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing::{info};
 use crate::handlers::handlers::{dashboard, get_status, get_thumbnail, set_index, stream_video};
 
 pub async fn start_axum_server(
@@ -26,7 +26,8 @@ pub async fn start_axum_server(
         "wss://relay.damus.io".to_string(),
         "wss://relay.snort.social".to_string(),
     ];
-    let api = ContentDiscovery::new(relays).await?;
+    let client = Arc::new(Client::default());
+    let api = ContentDiscovery::new(relays, client).await?;
 
     // Create the global service state
     let state = AppState::new(
@@ -39,12 +40,10 @@ pub async fn start_axum_server(
 
     // Wrap in an Arc
     let shared_state = Arc::new(state);
+    let manager = Arc::new(DownloadManager::new(shared_state.clone()));
 
-    // Start the download manager in background
-    let manager = DownloadManager::new(shared_state.clone());
-    tokio::spawn(async move {
-        manager.run().await;
-    });
+    tokio::spawn(manager.clone().run());
+
 
     // Build the router
     let app = Router::new()
@@ -64,5 +63,5 @@ pub async fn start_axum_server(
     });
 
     // Return (the address, the state)
-    Ok((addr_str, shared_state))
+    Ok((addr_str, shared_state.clone()))
 }

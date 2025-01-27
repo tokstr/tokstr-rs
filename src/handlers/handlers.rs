@@ -9,7 +9,7 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::{io::SeekFrom};
-use std::sync::Arc;
+use std::sync::{Arc};
 use axum::response::Html;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -19,7 +19,7 @@ use crate::models::models::VideoDownload;
 
 #[derive(Debug, Deserialize)]
 pub struct VideoQuery {
-    pub index: usize,
+    pub id: String,
 }
 
 /// Serve video in partial content (Range) if requested, or full if no Range is given.
@@ -30,10 +30,10 @@ pub async fn stream_video(
     Query(query): Query<VideoQuery>,
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
-    let index = query.index;
+    let id = query.id;
     let maybe_path = {
-        let list = state.discovered_videos.lock().await.to_vec();
-        list.get(index).and_then(|v| v.local_path.clone())
+        let videos = state.discovered_videos.lock().await;
+        videos.get(&id).and_then(|v| v.local_path.clone())
     };
 
     let Some(path) = maybe_path else {
@@ -136,18 +136,18 @@ pub struct StatusResponse {
 
 /// Returns JSON status of the system.
 pub async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse{
-    let list = state.discovered_videos.lock().await.to_vec();
+    let list = state.discovered_videos.lock().await;
     let current_idx = *state.current_index.lock().await;
     let used_storage = *state.current_storage_bytes.lock().await;
 
-    let total_speed = list.iter().map(|v| v.download_speed_bps).sum();
+    let total_speed = list.iter().map(|v| v.1.download_speed_bps).sum();
 
     // Simple approach: if we have length_seconds, we consider that “fully downloaded”
     // if local_path.is_some() OR v.downloaded_bytes >= v.content_length.unwrap_or(u64::MAX).
     // Summation:
     let mut total_minutes = 0.0;
     for v in list.iter() {
-        if let Some(length) = v.length_seconds {
+        if let Some(length) = v.1.length_seconds {
             // either partial or full...
             // if you want to be partial, do ratio = (v.downloaded_bytes as f64 / v.content_length as f64),
             // but for simplicity, let's just add the full length if we have it.
@@ -157,7 +157,7 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse
 
     let status = StatusResponse {
         current_index: current_idx,
-        videos: list.clone(),
+        videos: list.values().cloned().collect(),
         used_storage_bytes: used_storage,
         max_storage_bytes: state.max_storage_bytes,
         total_download_speed_bps: total_speed,
@@ -176,26 +176,26 @@ pub async fn set_index(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SetIndexRequest>,
 ) -> impl IntoResponse {
-    let mut idx = state.current_index.lock().await;
-    *idx = payload.index;
+    *state.current_index.lock().await = payload.index;
     "OK"
 }
 
 
+
 #[derive(Debug, Deserialize)]
 pub struct ThumbnailQuery {
-    pub index: usize,
+    pub id: String,
 }
 
 pub async fn get_thumbnail(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ThumbnailQuery>,
 ) -> Result<Response, StatusCode> {
-    let index = query.index;
+    let id = query.id;
 
     let maybe_thumb = {
-        let list = state.discovered_videos.lock().await.to_vec();
-        list.get(index)
+        let videos = state.discovered_videos.lock().await;
+        videos.get(&id)
             .and_then(|v| v.thumbnail_path.clone())
     };
 

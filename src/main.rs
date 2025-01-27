@@ -17,6 +17,8 @@ use uuid::Uuid;
 use tracing_subscriber::{Layer};
 
 use axum::{response::Html};
+use nostr_sdk::Alphabet::M;
+use nostr_sdk::Client;
 use tracing_subscriber::{fmt};
 
 use tracing_subscriber::{EnvFilter};
@@ -38,13 +40,14 @@ async fn main() {
     ];
 
     // 2) Create the API -- it automatically fetches videos on creation
-    let api = ContentDiscovery::new(relays).await.unwrap();
+    let client = Arc::new(Client::default());
+    let api = ContentDiscovery::new(relays, client).await.unwrap();
 
 
     // Create the global service state
     let state = AppState::new(
         api,
-        2,
+        10,
         2,
         60,
         1024 * 1024 * 1024,
@@ -52,7 +55,8 @@ async fn main() {
 
     let state_shared = Arc::new(state);
     // Start the DownloadManager in the background
-    let manager = DownloadManager::new(state_shared.clone());
+
+    let manager = Arc::new(DownloadManager::new(state_shared.clone()));
     tokio::spawn(async move {
         manager.run().await;
     });

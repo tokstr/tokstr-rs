@@ -1046,6 +1046,7 @@ dependencies = [
  "bytes",
  "ffmpeg-extractor",
  "flutter_rust_bridge",
+ "futures",
  "futures-util",
  "image",
  "log",

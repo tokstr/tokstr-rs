@@ -1,129 +1,356 @@
+use std::error::Error;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::{remove_file, File};
 use tokio::io::AsyncWriteExt;
-use tracing::{debug, error, info, warn};
+use tokio::sync::Mutex;
+
+use futures::stream::{self, StreamExt};
 use uuid::Uuid;
+use tracing::{debug, error, info, warn};
+use reqwest::header::CONTENT_LENGTH;
 
-use mp4parse::{read_mp4, Error as Mp4Error, TrackType};
 
-use crate::service::state::AppState;
-use crate::models::models::VideoDownload;
-use crate::utils::utils::write_image_to_jpeg;
+/// A simple struct that holds the final MP4 metadata for demonstration.
+pub struct VideoMetadata {
+    pub duration_seconds: f64,
+    pub codec: String,
+    pub width: u32,
+    pub height: u32,
+}
 
+// ===========================
+// Download Manager
+// ===========================
+
+#[derive(Debug, Clone)]
 pub struct DownloadManager {
     state: Arc<AppState>,
+
+    /// We keep the queue of downloads in a separate list; only downloads in progress or
+    /// ready to be downloaded are in here. This is distinct from `discovered_videos`,
+    /// which can hold a larger set of known videos (including completed).
+    download_queue: Arc<Mutex<Vec<VideoDownload>>>,
+    client: Arc<reqwest::Client>,
 }
 
 impl DownloadManager {
     pub fn new(state: Arc<AppState>) -> Self {
-        Self { state }
+        let client = Arc::new(reqwest::Client::new());
+        let download_queue = Arc::new(Mutex::new(Vec::new()));
+        Self { state, download_queue, client }
     }
 
-    /// Main loop: fetch newly discovered videos, enforce behind limit,
-    /// start downloads, etc.
-    pub async fn run(self) {
+    /// Main loop for scheduling new downloads, removing old content, etc.
+    pub async fn run(self: Arc<Self>) {
         loop {
-            // 1) Fetch any *new* videos from `content_discovery`.
-            self.sync_new_videos().await;
+            // 1) Fetch new videos & gather HEAD content_length, add them to discovered
+            self.discovery_new_videos().await;
 
-            // 2) Enforce behind-limit
+            // 2) Re-sort the entire discovered set according to your multi-criteria
+            //    then push the next candidates to the `download_queue`.
+            self.update_download_queue().await;
+
+            // 3) Enforce behind-limit, removing old files
             self.enforce_behind_limit().await;
 
-            // 3) Trigger downloads
+            // 4) Trigger actual downloads if below concurrency limit
             self.download_videos().await;
 
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     }
 
-    /// Grabs newly arrived videos from `content_discovery` and
-    /// appends them to our in-memory `discovered_videos` list.
-    async fn sync_new_videos(&self) {
-        // 1) Call the new content discovery manager to fetch videos
-        let mut discovery = self.state.content_discovery.lock().await;
-        let new_videos = discovery.fetch_new_videos(); // returns Vec<Video>
+    /// Method to stop/drop a given download in progress or queued.
+    /// This removes it from the `download_queue`, and marks it as not `downloading`.
+    /// If you want to actually remove partial data from disk, do so here as well.
+    pub async fn stop_download(&self, video_id: &str) -> bool {
+        let mut queue = self.download_queue.lock().await;
+        if let Some(pos) = queue.iter().position(|v| v.id == video_id) {
+            let removed = queue.remove(pos);
 
-        // 2) Convert each to VideoDownload (if your `Video` has a `to_download()` method)
-        let mut discovered = self.state.discovered_videos.lock().await;
-        for video in new_videos {
-            discovered.push(VideoDownload::from_nostr_video(video));
+            // Mark as not downloading in discovered_videos as well
+            let mut discovered = self.state.discovered_videos.lock().await;
+            if let Some(dv) = discovered.get_mut(video_id) {
+                dv.downloading = false;
+            }
+
+            // Optionally remove partial file from disk:
+            if let Some(local_path) = removed.local_path {
+                let _ = remove_file(local_path).await;
+            }
+            true
+        } else {
+            false
         }
     }
 
+    /// Pull new videos from `ContentDiscovery` and enrich with HEAD requests.
+    async fn discovery_new_videos(&self) {
+        // 1) Retrieve newly discovered videos
+        let new_batch: Vec<VideoDownload> = self
+            .state
+            .content_discovery
+            .fetch_new_videos()
+            .await
+            .into_iter()
+            .map(VideoDownload::from_nostr_video)
+            .collect();
+
+        // 2) HEAD-check content_length in parallel
+        let enriched_batch =
+            fetch_content_lengths_in_parallel(self.client.clone(), new_batch, 20).await;
+
+        // 3) Merge into the main discovered list
+        let mut discovered = self.state.discovered_videos.lock().await;
+        for mut vid in enriched_batch {
+            discovered.insert(vid.id.clone(), vid);
+        }
+        // End of `discovery_new_videos`.
+    }
+
+    /// Decide which videos should be in the `download_queue` and in what order, based
+    /// on your multi-criteria stable-sorting. We'll:
+    /// 1) Collect all not-yet-downloaded videos.
+    /// 2) Sort them in the special "two-phase" stable order:
+    ///    (a) Until we meet the `target_videos_ahead` or `target_minutes_ahead`,
+    ///        prioritize small size, then high score.
+    ///    (b) After meeting that threshold, prioritize high score, then small size.
+    /// 3) Update the local `download_queue` with this sorted subset (only keep videos
+    ///    that are actually missing or incomplete).
+    async fn update_download_queue(&self) {
+        let discovered_map = self.state.discovered_videos.lock().await;
+        let all_videos: Vec<VideoDownload> = discovered_map.values().cloned().collect();
+        drop(discovered_map); // drop lock so we can do the sorting below
+
+        // Filter for only videos that do NOT have a local file and are not done
+        // (a real check might confirm partial downloads as well).
+        let mut candidates: Vec<VideoDownload> = all_videos
+            .into_iter()
+            .filter(|v| !has_local_file(v) /* or v.local_path.is_none() */ )
+            .collect();
+
+        // Sort them with the two-phase stable approach:
+        sort_videos_for_download(
+            &mut candidates,
+            self.state.target_videos_ahead,
+            self.state.target_minutes_ahead,
+        );
+
+        // Now update the queue. For simplicity, we replace the entire queue with the new ordering.
+        let mut queue = self.download_queue.lock().await;
+        *queue = candidates;
+    }
+
+    /// Remove behind-limit videos from disk. This example simply checks how far behind
+    /// our current index we are, and removes anything older than `max_behind_seconds`.
     async fn enforce_behind_limit(&self) {
         let current_idx = *self.state.current_index.lock().await;
+        let mut discovered = self.state.discovered_videos.lock().await;
 
-        // Lock the discovered_videos list
-        let mut videos = self.state.discovered_videos.lock().await;
-
-        let mut i = current_idx as isize - 1;
-        while i >= 0 {
-            let should_remove = {
-                if let Some(video) = videos.get(i as usize) {
-                    let length = video.length_seconds.unwrap_or(0.0);
-                    length > self.state.max_behind_seconds as f64
-                } else {
-                    false
-                }
-            };
-
-            if should_remove {
-                if let Some(video) = videos.get_mut(i as usize) {
-                    if let Some(local_path) = &video.local_path {
-                        let _ = remove_file(local_path).await;
-                        video.local_path = None;
+        let mut paths_to_remove = Vec::new();
+        for (vid_id, video) in discovered.iter_mut() {
+            // We pretend the "index" is the integer parse of the ID or something—just a stub:
+            // In a real system, you'd figure out if the video is behind the "current_idx".
+            // If it is behind, and its length is beyond `max_behind_seconds`, we remove it:
+            if let Some(length) = video.length_seconds {
+                if length > self.state.max_behind_seconds as f64 {
+                    // schedule removal
+                    if let Some(local_path) = video.local_path.take() {
+                        paths_to_remove.push(local_path);
                     }
                 }
             }
-            i -= 1;
+        }
+        drop(discovered);
+
+        // Remove files outside the lock
+        for path in paths_to_remove {
+            let _ = remove_file(path).await;
         }
     }
 
+    /// Start downloads if we're below concurrency limit, taking them in the order from
+    /// `download_queue`.
     async fn download_videos(&self) {
-        let current_idx = *self.state.current_index.lock().await;
+        // We'll see how many are currently downloading
+        let queue_snapshot = {
+            let queue = self.download_queue.lock().await;
+            queue.clone()
+        };
 
-        // Lock the discovered_videos list
-        let mut videos = self.state.discovered_videos.lock().await;
+        let concurrent_downloads = queue_snapshot.iter().filter(|v| v.downloading).count();
 
-        // Count how many are currently downloading
-        let mut concurrent_downloads = videos.iter().filter(|v| v.downloading).count();
+        let max_downloads = self.state.max_parallel_downloads;
 
-        for (idx, video) in videos.iter_mut().enumerate().skip(current_idx) {
-            if concurrent_downloads >= self.state.max_parallel_downloads {
-                break;
+        // If already at concurrency limit, do nothing
+        if concurrent_downloads >= max_downloads {
+            return;
+        }
+
+        // Now pick the top candidates that are NOT downloading
+        let to_start = queue_snapshot
+            .into_iter()
+            .filter(|v| !v.downloading)
+            .take(max_downloads - concurrent_downloads);
+
+        for video in to_start {
+            // Mark it as downloading in the queue + discovered_videos
+            {
+                let mut discovered = self.state.discovered_videos.lock().await;
+                if let Some(v) = discovered.get_mut(&video.id) {
+                    v.downloading = true;
+                }
+            }
+            {
+                let mut queue = self.download_queue.lock().await;
+                if let Some(qv) = queue.iter_mut().find(|qv| qv.id == video.id) {
+                    qv.downloading = true;
+                }
             }
 
-            if video.local_path.is_none() && !video.downloading {
-                video.downloading = true;
-                let url = video.url.clone();
-                let state_clone = self.state.clone();
+            let dm = self.clone();
+            tokio::spawn(async move {
+                if let Err(e) = download_video_progressive(
+                    dm.state.clone(),
+                    dm.client.clone(),
+                    video.clone(),
+                )
+                    .await
+                {
+                    error!("Failed to download {}: {e}", video.url);
 
-                // Spawn an async task to download this video
-                tokio::spawn(async move {
-                    if let Err(e) = download_video_progressive(&state_clone, idx, &url).await {
-                        error!("Failed to download {url}: {e}");
-                        let mut list = state_clone.discovered_videos.lock().await;
-                        if let Some(v) = list.get_mut(idx) {
-                            v.downloading = false;
-                        }
+                    // Mark as not downloading (and possibly remove from queue) if error
+                    let mut discovered = dm.state.discovered_videos.lock().await;
+                    if let Some(v) = discovered.get_mut(&video.id) {
+                        v.downloading = false;
                     }
-                });
+                    drop(discovered);
 
-                concurrent_downloads += 1;
-            }
+                    let mut queue = dm.download_queue.lock().await;
+                    if let Some(pos) = queue.iter().position(|qv| qv.id == video.id) {
+                        let _ = queue.remove(pos); // or set .downloading = false
+                    }
+                } else {
+                    // On success, remove from queue, or mark as complete
+                    let mut queue = dm.download_queue.lock().await;
+                    if let Some(pos) = queue.iter().position(|qv| qv.id == video.id) {
+                        queue.remove(pos);
+                    }
+                }
+            });
         }
     }
 }
 
-/// Progressive download of a single MP4 file.
-/// (Same as your original code, but references `discovered_videos` instead of the old discovery list).
+// ===========================
+// The two-phase stable sorting
+// ===========================
+
+/// Utility to check if a `VideoDownload` effectively has a local file.
+fn has_local_file(video: &VideoDownload) -> bool {
+    video.local_path.is_some()
+}
+
+/// Sort videos in a stable manner such that:
+///
+/// 1. We first take enough videos to meet:
+///    - `target_videos_ahead` count, OR
+///    - `target_minutes_ahead` total length
+///    sorting them by **small content_length ascending, then high score descending**.
+///
+/// 2. Once we have satisfied the target, subsequent videos are sorted
+///    by **score descending, then small content_length ascending**.
+///
+/// We do this by:
+///    - Partitioning the videos into (needed_for_target, leftover)
+///      using a running count of how many videos we've added and how many total minutes
+///      we've accumulated.
+///    - Doing two stable sorts on each group, then concatenating them.
+///
+/// NOTE: Because we’re doing separate stable sorts and then concatenating, the
+/// overall result is stable as well (the partitioning preserves original order).
+pub fn sort_videos_for_download(
+    videos: &mut Vec<VideoDownload>,
+    target_videos_ahead: usize,
+    target_minutes_ahead: f64,
+) {
+    // Step 1) partition into "needed" vs "leftover"
+    let (mut needed, mut leftover) = partition_for_target(videos, target_videos_ahead, target_minutes_ahead);
+
+    // Step 2) stable sort within each partition
+    //  needed:  by content_length ASC, then score DESC
+    needed.sort_by(|a, b| {
+        // content_length ASC
+        let a_len = a.content_length.unwrap_or(u64::MAX);
+        let b_len = b.content_length.unwrap_or(u64::MAX);
+        match a_len.cmp(&b_len) {
+            std::cmp::Ordering::Equal => {
+                // score DESC
+                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            }
+            other => other,
+        }
+    });
+
+    // leftover: by score DESC, then content_length ASC
+    leftover.sort_by(|a, b| {
+        // score DESC
+        match b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal) {
+            std::cmp::Ordering::Equal => {
+                // content_length ASC
+                let a_len = a.content_length.unwrap_or(u64::MAX);
+                let b_len = b.content_length.unwrap_or(u64::MAX);
+                a_len.cmp(&b_len)
+            }
+            other => other,
+        }
+    });
+
+    // Step 3) combine them back
+    needed.append(&mut leftover);
+    *videos = needed;
+}
+
+/// Given a list of videos, pick as many as needed to satisfy either the
+/// `target_videos_ahead` count or the `target_minutes_ahead` total length.
+/// Return (needed, leftover).
+fn partition_for_target(
+    videos: &[VideoDownload],
+    target_videos_ahead: usize,
+    target_minutes_ahead: f64,
+) -> (Vec<VideoDownload>, Vec<VideoDownload>) {
+    let mut needed = Vec::new();
+    let mut leftover = Vec::new();
+
+    let mut accumulated_count = 0usize;
+    let mut accumulated_minutes = 0f64;
+
+    for v in videos {
+        // Once we've met *both* conditions, the rest go to leftover
+        if accumulated_count >= target_videos_ahead
+            && accumulated_minutes >= target_minutes_ahead
+        {
+            leftover.push(v.clone());
+        } else {
+            needed.push(v.clone());
+            accumulated_count += 1;
+            // use length_seconds or approximate
+            if let Some(secs) = v.length_seconds {
+                accumulated_minutes += secs / 60.0;
+            }
+        }
+    }
+
+    (needed, leftover)
+}
+
 async fn download_video_progressive(
-    state: &AppState,
-    index: usize,
-    url: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let client = reqwest::Client::new();
-    let mut resp = client.get(url).send().await?;
+    state: Arc<AppState>,
+    client: Arc<reqwest::Client>,
+    video: VideoDownload,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut resp = client.get(&video.url).send().await?;
     if !resp.status().is_success() {
         return Err(format!("HTTP request failed with status: {}", resp.status()).into());
     }
@@ -131,8 +358,8 @@ async fn download_video_progressive(
     // Possibly store content_length if available:
     if let Some(cl) = resp.content_length() {
         let mut videos_guard = state.discovered_videos.lock().await;
-        if let Some(video) = videos_guard.get_mut(index) {
-            video.content_length = Some(cl);
+        if let Some(video_mut) = videos_guard.get_mut(&video.id) {
+            video_mut.content_length = Some(cl);
         }
     }
 
@@ -140,149 +367,136 @@ async fn download_video_progressive(
     let file_name = format!("{}.mp4", Uuid::new_v4());
     let file_path = std::env::temp_dir().join(file_name);
 
-    // Immediately store the local_path so we can stream partial data
+    // Store the local_path
     {
-        let mut list = state.discovered_videos.lock().await;
-        if let Some(video) = list.get_mut(index) {
-            video.local_path = Some(file_path.clone());
+        let mut discovered = state.discovered_videos.lock().await;
+        if let Some(video_mut) = discovered.get_mut(&video.id) {
+            video_mut.local_path = Some(file_path.clone());
         }
     }
 
-    // Open file for writing
     let mut file = File::create(&file_path).await?;
-
     let mut parse_buffer: Vec<u8> = Vec::new();
     let mut downloaded_bytes = 0u64;
     let mut metadata_extracted = false;
 
     // Download in chunks
     while let Some(chunk) = resp.chunk().await? {
-        // 1) Check storage
+        // 1) Check storage budget
         {
             let mut storage = state.current_storage_bytes.lock().await;
-            if *storage + chunk.len() as u64 > state.max_storage_bytes {
-                warn!("Storage budget exceeded for URL: {url}");
+            if *storage + (chunk.len() as u64) > state.max_storage_bytes {
+                warn!("Storage budget exceeded while downloading {}", video.url);
                 return Err("Storage budget exceeded".into());
             }
             *storage += chunk.len() as u64;
         }
 
-        // 2) Write chunk to disk
+        // 2) Write to disk
         file.write_all(&chunk).await?;
-        file.flush().await?;
-
         downloaded_bytes += chunk.len() as u64;
 
-        // Update progress, speed, etc.
+        // 3) Update progress
         {
-            let mut videos_guard = state.discovered_videos.lock().await;
-            if let Some(video) = videos_guard.get_mut(index) {
-                video.downloaded_bytes = downloaded_bytes;
-                if video.content_length.is_none() {
+            let mut discovered = state.discovered_videos.lock().await;
+            if let Some(video_mut) = discovered.get_mut(&video.id) {
+                video_mut.downloaded_bytes = downloaded_bytes;
+                if video_mut.content_length.is_none() {
                     if let Some(cl) = resp.content_length() {
-                        video.content_length = Some(cl);
+                        video_mut.content_length = Some(cl);
                     }
                 }
+
                 let now = std::time::Instant::now();
-                match video.last_speed_update_instant {
+                match video_mut.last_speed_update_instant {
                     None => {
-                        video.last_speed_update_instant = Some(now);
-                        video.last_speed_update_bytes = downloaded_bytes;
-                        video.download_speed_bps = 0.0;
+                        video_mut.last_speed_update_instant = Some(now);
+                        video_mut.last_speed_update_bytes = downloaded_bytes;
+                        video_mut.download_speed_bps = 0.0;
                     }
                     Some(prev_time) => {
                         let dt = now.duration_since(prev_time).as_secs_f64();
                         if dt >= 1.0 {
-                            let bytes_diff = downloaded_bytes - video.last_speed_update_bytes;
-                            video.download_speed_bps = bytes_diff as f64 / dt;
-                            video.last_speed_update_instant = Some(now);
-                            video.last_speed_update_bytes = downloaded_bytes;
+                            let bytes_diff = downloaded_bytes - video_mut.last_speed_update_bytes;
+                            video_mut.download_speed_bps = bytes_diff as f64 / dt;
+                            video_mut.last_speed_update_instant = Some(now);
+                            video_mut.last_speed_update_bytes = downloaded_bytes;
                         }
                     }
                 }
             }
         }
 
-        // 3) Keep a copy for partial parsing
-        parse_buffer.extend_from_slice(&chunk);
-
-        // Attempt to parse on-the-fly if we haven't yet succeeded
+        // Attempt to parse partial metadata (moov box)
         if !metadata_extracted {
-            match parse_mp4_entire(&parse_buffer) {
-                Ok(Some((duration, codec, width, height))) => {
-                    update_metadata(state, index, &file_path, duration, &codec, width, height).await;
+            parse_buffer.extend_from_slice(&chunk);
+            match try_parse_mp4_in_blocking_thread(parse_buffer.clone()).await {
+                Ok(Some(metadata)) => {
+                    update_metadata(state.clone(), &video.id, &file_path, metadata).await;
                     metadata_extracted = true;
 
-                    // Attempt to decode a thumbnail
-                    if let Ok(vec) = ffmpeg_extractor::extract_first_frame_to_jpeg(&parse_buffer) {
+                    #[cfg(debug_server)]
+                    if let Ok(jpeg_data) = ffmpeg_extractor::extract_first_frame_to_jpeg(&parse_buffer) {
                         let thumb_path = std::env::temp_dir()
                             .join(format!("thumb_{}.jpg", Uuid::new_v4()));
-                        if let Err(e) = write_image_to_jpeg(&vec, &thumb_path) {
-                            tracing::warn!("Could not write thumbnail to JPEG: {}", e);
+                        if let Err(e) = write_image_to_jpeg(&jpeg_data, &thumb_path).await {
+                            warn!("Could not write thumbnail: {}", e);
                         } else {
+                            // Update discovered
                             let mut list = state.discovered_videos.lock().await;
-                            if let Some(video) = list.get_mut(index) {
-                                video.thumbnail_path = Some(thumb_path);
+                            if let Some(video_mut) = list.get_mut(&video.id) {
+                                video_mut.thumbnail_path = Some(thumb_path);
                             }
                         }
                     }
+
                 }
-                Ok(None) => {
-                    // No moov yet, or incomplete data - continue
-                }
-                Err(_e) => {
-                    // Parse error - optionally log or ignore
-                }
+                Ok(None) => { /* not enough data yet */ }
+                Err(_) => { /* parse error is non-fatal here, ignore */ }
             }
         }
     }
 
-    // Now the entire download loop is finished
     file.flush().await?;
-    drop(file); // close the file
+    drop(file);
 
-    // If never extracted metadata, do a final parse on the full buffer
+    // If never extracted metadata, parse final buffer
     if !metadata_extracted {
-        match parse_mp4_entire(&parse_buffer) {
-            Ok(Some((duration, codec, width, height))) => {
-                info!(
-                    "Parsed final MP4 metadata for {url}: duration={duration}, codec={codec}, \
-                     width={width}, height={height}"
-                );
-                update_metadata(state, index, &file_path, duration, &codec, width, height).await;
+        match try_parse_mp4_in_blocking_thread(parse_buffer).await {
+            Ok(Some(metadata)) => {
+                info!("Parsed final MP4 for {} ({}s)", video.url, metadata.duration_seconds);
+                update_metadata(state.clone(), &video.id, &file_path, metadata).await;
             }
             Ok(None) => {
-                warn!("Could not parse MP4 metadata for {url}. Possibly missing moov box.");
+                warn!("Could not parse MP4 metadata for {} (possibly no moov box)", video.url);
             }
             Err(e) => {
-                warn!("Error parsing final MP4 data for {url}: {e}");
+                warn!("Error parsing final MP4 data for {}: {e}", video.url);
             }
         }
     }
 
-    // Mark downloading = false
+    // Mark downloading = false in discovered
     {
         let mut list = state.discovered_videos.lock().await;
-        if let Some(video) = list.get_mut(index) {
-            video.downloading = false;
+        if let Some(video_mut) = list.get_mut(&video.id) {
+            video_mut.downloading = false;
         }
     }
 
-    debug!(
-        "Downloaded video #{index} => {}, size: {} bytes",
-        file_path.display(),
-        downloaded_bytes,
-    );
-
+    debug!("Downloaded {} => size: {} bytes", video.url, downloaded_bytes);
     Ok(())
 }
 
-/// Parse the entire MP4 buffer. Returns (duration, codec, width, height).
-fn parse_mp4_entire(
-    parse_buffer: &[u8],
-) -> Result<Option<(f64, String, u32, u32)>, Mp4Error> {
-    let mut context = read_mp4(&mut std::io::Cursor::new(parse_buffer))?;
+// ===========================
+// MP4 parsing stubs
+// ===========================
+use mp4parse::{read_mp4, Error as Mp4Error, TrackType};
+use crate::models::models::VideoDownload;
+use crate::service::state::AppState;
 
+fn parse_mp4_entire(parse_buffer: &[u8]) -> Result<Option<VideoMetadata>, Mp4Error> {
+    let context = read_mp4(&mut std::io::Cursor::new(parse_buffer))?;
     if let Some(track) = context.tracks.first() {
         let timescale = track.timescale.map_or(0, |t| t.0);
         let raw_duration = track.duration.map_or(0, |d| d.0);
@@ -303,37 +517,102 @@ fn parse_mp4_entire(
                         } else {
                             "unknown".to_string()
                         }
-                    },
+                    }
                     _ => "non-video".to_string(),
                 }
             } else {
                 "unknown".to_string()
             };
-            return Ok(Some((duration_seconds, codec, width, height)));
+            let metadata = VideoMetadata {
+                duration_seconds,
+                codec,
+                width,
+                height,
+            };
+            return Ok(Some(metadata));
         }
     }
     Ok(None)
 }
 
+async fn try_parse_mp4_in_blocking_thread(
+    parse_buffer: Vec<u8>,
+) -> Result<Option<VideoMetadata>, Mp4Error> {
+    let parse_result = tokio::task::spawn_blocking(move || parse_mp4_entire(&parse_buffer))
+        .await
+        .map_err(|join_err| {
+            Mp4Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("spawn_blocking join error: {join_err}"),
+            ))
+        })?;
+
+    parse_result
+}
+
+/// Update metadata in discovered_videos
 async fn update_metadata(
-    state: &AppState,
-    index: usize,
+    state: Arc<AppState>,
+    video_id: &str,
     file_path: &std::path::Path,
-    duration: f64,
-    codec: &str,
-    width: u32,
-    height: u32,
+    metadata: VideoMetadata,
 ) {
     let mut list = state.discovered_videos.lock().await;
-    if let Some(video) = list.get_mut(index) {
+    if let Some(video) = list.get_mut(video_id) {
         video.local_path = Some(file_path.to_path_buf());
-        video.length_seconds = Some(duration);
-        video.format = Some(codec.to_string());
-        if width > 0 {
-            video.width = Some(width);
+        video.length_seconds = Some(metadata.duration_seconds);
+        video.format = Some(metadata.codec.to_string());
+        if metadata.width > 0 {
+            video.width = Some(metadata.width);
         }
-        if height > 0 {
-            video.height = Some(height);
+        if metadata.height > 0 {
+            video.height = Some(metadata.height);
         }
     }
+}
+
+// ===========================
+// HEAD fetch utility
+// ===========================
+pub async fn fetch_content_lengths_in_parallel(
+    client: Arc<reqwest::Client>,
+    videos: Vec<VideoDownload>,
+    parallel_calls: usize,
+) -> Vec<VideoDownload> {
+    stream::iter(videos)
+        .map(|mut video| {
+            let client = client.clone();
+            async move {
+                if video.content_length.is_some() {
+                    return video;
+                }
+
+                let response = match client.head(&video.url).send().await {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        warn!("HEAD request error for {}: {}", video.url, e);
+                        return video;
+                    }
+                };
+
+                if !response.status().is_success() {
+                    warn!("HEAD request failed for {}: status={}", video.url, response.status());
+                    return video;
+                }
+
+                if let Some(length) = response
+                    .headers()
+                    .get(CONTENT_LENGTH)
+                    .and_then(|val| val.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                {
+                    video.content_length = Some(length);
+                }
+
+                video
+            }
+        })
+        .buffered(parallel_calls)
+        .collect()
+        .await
 }

@@ -3,6 +3,7 @@ use once_cell::sync::OnceCell;
 
 use flutter_rust_bridge::frb;
 use log::info;
+use tokio::sync::Mutex;
 use crate::service::main_axum::start_axum_server;
 use crate::models::models::VideoDownload;
 use crate::service::state::AppState;
@@ -45,11 +46,11 @@ pub async fn ffi_get_discovered_videos() -> Vec<FfiVideoDownload> {
         .expect("Axum server not started or state not set");
 
     // Lock the discovered_videos
-    let discovered = app_state.discovered_videos.lock().await;
-    info!("Discovered videos: {:?}", discovered);
+    let discovered = &app_state.discovered_videos.lock().await;
     discovered
-        .iter()
-        .map(|vid: &VideoDownload| FfiVideoDownload {
+        .values()
+        .into_iter()
+        .map(|vid| FfiVideoDownload {
             id: vid.id.to_string(),
             url: vid.url.clone(),
             title: Some(vid.nostr.title.clone()),
