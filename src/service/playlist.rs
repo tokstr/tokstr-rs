@@ -1,8 +1,10 @@
+use crate::models::models::VideoDownload;
+
 #[derive(Debug)]
 pub struct Playlist {
     id: String,
     current_position: Option<usize>,
-    items: Vec<String>,
+    items: Vec<VideoDownload>,
     items_by_id: std::collections::HashMap<String, usize>,
 }
 
@@ -16,20 +18,20 @@ impl Playlist {
         }
     }
 
-    fn add(&mut self, video: String) {
+    pub fn add(&mut self, video: VideoDownload) {
         let idx = self.items.len();
         self.items.push(video.clone());
-        self.items_by_id.insert(video, idx);
+        self.items_by_id.insert(video.id, idx);
     }
 
-    fn current(&self) -> Option<&String> {
+    pub fn current(&self) -> Option<&VideoDownload> {
         if let Some(pos) = self.current_position {
             return self.items.get(pos);
         }
         None
     }
 
-    fn next(&mut self) -> Option<&String> {
+    pub fn next(&mut self) -> Option<&VideoDownload> {
         if let Some(pos) = self.current_position {
             if pos + 1 < self.items.len() {
                 self.current_position = Some(pos + 1);
@@ -39,7 +41,7 @@ impl Playlist {
         None
     }
 
-    fn prev(&mut self) -> Option<&String> {
+    pub fn prev(&mut self) -> Option<&VideoDownload> {
         if let Some(pos) = self.current_position {
             if pos > 0 {
                 self.current_position = Some(pos - 1);
@@ -47,5 +49,9 @@ impl Playlist {
             }
         }
         None
+    }
+
+    pub fn as_vec(&self) -> Vec<VideoDownload> {
+        self.items.clone()
     }
 }

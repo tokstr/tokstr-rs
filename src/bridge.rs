@@ -2,7 +2,7 @@ use std::sync::Arc;
 use once_cell::sync::OnceCell;
 
 use flutter_rust_bridge::frb;
-use log::info;
+use log::{info, warn};
 use tokio::sync::Mutex;
 use crate::service::main_axum::start_axum_server;
 use crate::models::models::VideoDownload;
@@ -45,15 +45,18 @@ pub async fn ffi_get_discovered_videos() -> Vec<FfiVideoDownload> {
         .get()
         .expect("Axum server not started or state not set");
 
-    // Lock the discovered_videos
-    let discovered = &app_state.discovered_videos.lock().await;
+    // Lock the discovered_videos (which is presumably a HashMap<String, VideoDownload>)
+    let discovered = app_state.playlist.lock().await.as_vec();
+    warn!("Discovered videos: {:?}", discovered);
+
+    // Use `values()` to iterate over the VideoDownload objects, ignoring the keys
     discovered
-        .values()
-        .into_iter()
-        .map(|vid| FfiVideoDownload {
+        .iter().
+        map(|vid| FfiVideoDownload {
             id: vid.id.to_string(),
             url: vid.url.clone(),
             title: Some(vid.nostr.title.clone()),
         })
         .collect()
 }
+

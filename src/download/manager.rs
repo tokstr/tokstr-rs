@@ -10,6 +10,10 @@ use uuid::Uuid;
 use tracing::{debug, error, info, warn};
 use reqwest::header::CONTENT_LENGTH;
 
+use mp4parse::{read_mp4, Error as Mp4Error, TrackType};
+use crate::models::models::VideoDownload;
+use crate::service::state::AppState;
+
 
 /// A simple struct that holds the final MP4 metadata for demonstration.
 pub struct VideoMetadata {
@@ -110,7 +114,7 @@ impl DownloadManager {
     }
 
     /// Decide which videos should be in the `download_queue` and in what order, based
-    /// on your multi-criteria stable-sorting. We'll:
+    /// on a multi-criteria stable-sorting.
     /// 1) Collect all not-yet-downloaded videos.
     /// 2) Sort them in the special "two-phase" stable order:
     ///    (a) Until we meet the `target_videos_ahead` or `target_minutes_ahead`,
@@ -209,33 +213,39 @@ impl DownloadManager {
                 }
             }
 
+            let dm_state = Arc::clone(&self.state);
+            let dm_queue = Arc::clone(&self.download_queue);
+            let dm_client = Arc::clone(&self.client);
+            let video_clone = video.clone();
+
             let dm = self.clone();
             tokio::spawn(async move {
-                if let Err(e) = download_video_progressive(
-                    dm.state.clone(),
-                    dm.client.clone(),
-                    video.clone(),
+                match download_video_progressive(
+                    Arc::clone(&dm_state),
+                    dm_client.clone(),
+                    video_clone.clone(),
                 )
                     .await
                 {
-                    error!("Failed to download {}: {e}", video.url);
-
-                    // Mark as not downloading (and possibly remove from queue) if error
-                    let mut discovered = dm.state.discovered_videos.lock().await;
-                    if let Some(v) = discovered.get_mut(&video.id) {
-                        v.downloading = false;
+                    Err(e) => {
+                        error!("Failed to download {}: {e}", video_clone.url);
+                        let mut discovered = dm_state.discovered_videos.lock().await;
+                        if let Some(v) = discovered.get_mut(&video_clone.id) {
+                            v.downloading = false;
+                        }
+                        let mut queue = dm_queue.lock().await;
+                        if let Some(pos) = queue.iter().position(|qv| qv.id == video_clone.id) {
+                            queue.remove(pos);
+                        }
                     }
-                    drop(discovered);
 
-                    let mut queue = dm.download_queue.lock().await;
-                    if let Some(pos) = queue.iter().position(|qv| qv.id == video.id) {
-                        let _ = queue.remove(pos); // or set .downloading = false
-                    }
-                } else {
-                    // On success, remove from queue, or mark as complete
-                    let mut queue = dm.download_queue.lock().await;
-                    if let Some(pos) = queue.iter().position(|qv| qv.id == video.id) {
-                        queue.remove(pos);
+                    Ok(_) => {
+                        let mut queue = dm_queue.lock().await;
+                        if let Some(pos) = queue.iter().position(|qv| qv.id == video_clone.id) {
+                            queue.remove(pos);
+                        }
+                        let mut playlist = dm_state.playlist.lock().await;
+                        playlist.add(video_clone);
                     }
                 }
             });
@@ -349,7 +359,7 @@ async fn download_video_progressive(
     state: Arc<AppState>,
     client: Arc<reqwest::Client>,
     video: VideoDownload,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(VideoDownload), Box<dyn Error + Send + Sync>> {
     let mut resp = client.get(&video.url).send().await?;
     if !resp.status().is_success() {
         return Err(format!("HTTP request failed with status: {}", resp.status()).into());
@@ -485,15 +495,9 @@ async fn download_video_progressive(
     }
 
     debug!("Downloaded {} => size: {} bytes as {}", video.url, downloaded_bytes, video.id);
-    Ok(())
+    Ok((video))
 }
 
-// ===========================
-// MP4 parsing stubs
-// ===========================
-use mp4parse::{read_mp4, Error as Mp4Error, TrackType};
-use crate::models::models::VideoDownload;
-use crate::service::state::AppState;
 
 fn parse_mp4_entire(parse_buffer: &[u8]) -> Result<Option<VideoMetadata>, Mp4Error> {
     let context = read_mp4(&mut std::io::Cursor::new(parse_buffer))?;
