@@ -484,7 +484,7 @@ async fn download_video_progressive(
         }
     }
 
-    debug!("Downloaded {} => size: {} bytes", video.url, downloaded_bytes);
+    debug!("Downloaded {} => size: {} bytes as {}", video.url, downloaded_bytes, video.id);
     Ok(())
 }
 

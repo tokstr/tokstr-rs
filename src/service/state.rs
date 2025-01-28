@@ -24,8 +24,6 @@ pub struct AppState {
     /// Storage
     pub max_storage_bytes: u64,
     pub current_storage_bytes: Arc<Mutex<u64>>,
-
-
 }
 
 impl AppState {
