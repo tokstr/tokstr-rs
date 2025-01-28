@@ -46,7 +46,7 @@ pub async fn ffi_get_discovered_videos() -> Vec<FfiVideoDownload> {
         .expect("Axum server not started or state not set");
 
     // Lock the discovered_videos (which is presumably a HashMap<String, VideoDownload>)
-    let discovered = app_state.playlist.lock().await.as_vec();
+    let discovered = app_state.playlist.lock().await.new_content();
     warn!("Discovered videos: {:?}", discovered);
 
     // Use `values()` to iterate over the VideoDownload objects, ignoring the keys

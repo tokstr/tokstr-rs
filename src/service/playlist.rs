@@ -4,6 +4,8 @@ use crate::models::models::VideoDownload;
 pub struct Playlist {
     id: String,
     current_position: Option<usize>,
+    // We'll store the last position so we can only send new items to the client.
+    last_sent_position: Option<usize>,
     items: Vec<VideoDownload>,
     items_by_id: std::collections::HashMap<String, usize>,
 }
@@ -13,6 +15,7 @@ impl Playlist {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             current_position: None,
+            last_sent_position: None,
             items: Vec::new(),
             items_by_id: std::collections::HashMap::new(),
         }
@@ -55,6 +58,16 @@ impl Playlist {
     }
 
     pub fn as_vec(&self) -> Vec<VideoDownload> {
+        self.items.clone()
+    }
+
+    pub fn new_content(&mut self) -> Vec<VideoDownload> {
+        if let Some(pos) = self.last_sent_position {
+            if pos + 1 < self.items.len() {
+                return self.items[pos + 1..].to_vec();
+            }
+            self.last_sent_position = Some(pos);
+        }
         self.items.clone()
     }
 }
