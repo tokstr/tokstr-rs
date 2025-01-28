@@ -19,6 +19,9 @@ impl Playlist {
     }
 
     pub fn add(&mut self, video: VideoDownload) {
+        if self.items_by_id.contains_key(&video.id) {
+            return;
+        }
         let idx = self.items.len();
         self.items.push(video.clone());
         self.items_by_id.insert(video.id, idx);
