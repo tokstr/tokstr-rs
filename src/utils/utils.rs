@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::fs::File;
 use std::io::BufWriter;
+use std::net::TcpListener;
 use std::path::Path;
 use image::codecs::jpeg::JpegEncoder;
 use image::{ColorType, ExtendedColorType};
@@ -31,4 +32,15 @@ pub(crate) fn write_image_to_jpeg(
     )?;
 
     Ok(())
+}
+
+
+pub fn find_available_port() -> Result<TcpListener> {
+    for port in 8000..9000 {
+        let addr = format!("127.0.0.1:{}", port);
+        if let Ok(listener) = TcpListener::bind(&addr) {
+            return Ok(listener);
+        }
+    }
+    Err(anyhow::anyhow!("No available ports found"))
 }

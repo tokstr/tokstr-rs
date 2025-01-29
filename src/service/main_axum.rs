@@ -11,15 +11,10 @@ use crate::download::manager::DownloadManager;
 use crate::service::state::AppState;
 use tracing::{info};
 use crate::handlers::handlers::{dashboard, get_status, get_thumbnail, set_index, stream_video};
+use crate::utils::utils::find_available_port;
 
-pub async fn start_axum_server(
-    max_parallel_downloads: usize,
-    max_storage_bytes: u64,
-    address: Option<String>) -> Result<(String, Arc<AppState>)> {
-    let bind_str = address.unwrap_or_else(|| "127.0.0.1:0".to_string());
-
-    // Create a TcpListener so we can retrieve the actual bound address
-    let listener = TcpListener::bind(&bind_str)?;
+pub async fn start_axum_server(max_parallel_downloads: usize, max_storage_bytes: u64) -> Result<(String, Arc<AppState>)> {
+    let listener = find_available_port()?;
     let local_addr = listener.local_addr()?;
     info!("Starting server at {}", local_addr);
 

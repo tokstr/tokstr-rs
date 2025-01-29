@@ -29,14 +29,12 @@ use crate::download::manager::DownloadManager;
 use crate::handlers::handlers::{dashboard, get_status, get_thumbnail, set_index, stream_video};
 use crate::models::models::VideoDownload;
 use crate::utils::log::init_logger_once;
+use crate::utils::utils::find_available_port;
 
 #[tokio::main]
 async fn main() {
     init_logger_once();
-
-
-
-
+    // 1) Set up the relays
     let relays = vec![
         "wss://relay.damus.io".into(),
         "wss://relay.snort.social".into()
@@ -73,7 +71,7 @@ async fn main() {
         .with_state(state_shared.clone());
 
 
-    let listener = TcpListener::bind(&"127.0.0.1:0".to_string()).unwrap();
+    let listener = find_available_port().unwrap();
     let local_addr = listener.local_addr().unwrap();
     info!("Starting server at {}", local_addr);
 
