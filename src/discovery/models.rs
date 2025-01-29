@@ -1,7 +1,6 @@
 use flutter_rust_bridge::frb;
 use serde::{Deserialize, Serialize};
 
-#[frb]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NostrVideo {
     pub id: String,
@@ -13,7 +12,6 @@ pub struct NostrVideo {
     pub url: String,
 }
 
-#[frb]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserData {
     pub npub: Option<String>,
@@ -21,7 +19,6 @@ pub struct UserData {
     pub profile_picture: Option<String>,
 }
 
-#[frb]
 #[derive(Debug, Clone)]
 pub struct VideoVariant {
     pub title: Option<String>,
