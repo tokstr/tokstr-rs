@@ -4,6 +4,7 @@ use once_cell::sync::OnceCell;
 use flutter_rust_bridge::frb;
 use log::{info, warn};
 use tokio::sync::Mutex;
+use crate::discovery::models::NostrVideo;
 use crate::service::main_axum::start_axum_server;
 use crate::models::models::VideoDownload;
 use crate::service::state::AppState;
@@ -18,6 +19,7 @@ pub struct FfiVideoDownload {
     pub url: String,
     pub title: Option<String>,
     pub local_path: Option<String>,
+    pub nostr: NostrVideo
 }
 
 /// Start the Axum server and store the AppState in GLOBAL_STATE.
@@ -70,6 +72,7 @@ pub async fn ffi_get_discovered_videos() -> Vec<FfiVideoDownload> {
                 url: vid.url.clone(),
                 title: Some(vid.nostr.title.clone()),
                 local_path,
+                nostr: vid.nostr.clone(),
             }
         })
         .collect()
