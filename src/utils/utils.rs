@@ -5,6 +5,7 @@ use std::net::TcpListener;
 use std::path::Path;
 use image::codecs::jpeg::JpegEncoder;
 use image::{ColorType, ExtendedColorType};
+use log::error;
 
 pub(crate) fn write_image_to_jpeg(
     image_data: &[u8],
@@ -45,6 +46,7 @@ pub fn find_available_port() -> Result<TcpListener> {
 
     for port in 8000..9000 {
         let addr = format!("127.0.0.1:{}", port);
+        error!("Trying port {}", port);
         if let Ok(listener) = TcpListener::bind(&addr) {
             return Ok(listener);
         }
