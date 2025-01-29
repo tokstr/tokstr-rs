@@ -154,9 +154,6 @@ impl DownloadManager {
 
         let mut paths_to_remove = Vec::new();
         for (vid_id, video) in discovered.iter_mut() {
-            // We pretend the "index" is the integer parse of the ID or something—just a stub:
-            // In a real system, you'd figure out if the video is behind the "current_idx".
-            // If it is behind, and its length is beyond `max_behind_seconds`, we remove it:
             if let Some(length) = video.length_seconds {
                 if length > self.state.max_behind_seconds as f64 {
                     // schedule removal

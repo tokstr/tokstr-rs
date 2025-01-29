@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 use anyhow::Result;
 
@@ -16,26 +16,26 @@ pub async fn start_axum_server(
     max_parallel_downloads: usize,
     max_storage_bytes: u64,
     address: Option<String>) -> Result<(String, Arc<AppState>)> {
-    let addr_str = address.unwrap_or_else(|| "127.0.0.1:3000".to_string());
-    let addr = addr_str.parse().expect("Invalid address");
+    let bind_str = address.unwrap_or_else(|| "127.0.0.1:0".to_string());
 
-    info!("Starting server at {}", addr_str);
+    // Create a TcpListener so we can retrieve the actual bound address
+    let listener = TcpListener::bind(&bind_str)?;
+    let local_addr = listener.local_addr()?;
+    info!("Starting server at {}", local_addr);
 
-    // Create the content discovery
     let relays = vec![
         "wss://relay.damus.io".to_string(),
         "wss://relay.snort.social".to_string(),
     ];
     let client = Arc::new(Client::default());
-    let api = ContentDiscovery::new(relays, client).await?;
+    let content_discovery = ContentDiscovery::new(relays, client).await?;
 
     // Create the global service state
     let state = AppState::new(
-        api,
-        max_parallel_downloads,                         // max_downloads
-        2,                         // max_ahead
-        60,                        // max_behind_seconds
-        max_storage_bytes,        // max_storage_bytes
+        content_discovery,
+        max_parallel_downloads,
+        60,
+        max_storage_bytes,
     );
 
     // Wrap in an Arc
@@ -56,12 +56,12 @@ pub async fn start_axum_server(
 
     // Spawn Axum server in the background
     tokio::spawn(async move {
-        axum_server::Server::bind(SocketAddr::V4(addr))
+        axum_server::Server::from_tcp(listener)
             .serve(app.into_make_service())
             .await
             .unwrap();
     });
 
     // Return (the address, the state)
-    Ok((addr_str, shared_state.clone()))
+    Ok((local_addr.to_string(), shared_state))
 }

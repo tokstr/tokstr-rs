@@ -16,7 +16,6 @@ pub struct AppState {
 
     /// Concurrency settings
     pub max_parallel_downloads: usize,
-    pub max_ahead: usize,
     pub max_behind_seconds: u64,
     pub target_minutes_ahead: f64,
     pub target_videos_ahead: usize,
@@ -30,7 +29,6 @@ impl AppState {
     pub fn new(
         content_discovery: ContentDiscovery,
         max_parallel_downloads: usize,
-        max_ahead: usize,
         max_behind_seconds: u64,
         max_storage_bytes: u64,
     ) -> Self {
@@ -40,7 +38,6 @@ impl AppState {
             current_index: Arc::new(Mutex::new(0)),
             playlist: Arc::new(Mutex::new(Playlist::new())),
             max_parallel_downloads,
-            max_ahead,
             max_behind_seconds,
             target_minutes_ahead: 60.0,
             target_videos_ahead: 15,

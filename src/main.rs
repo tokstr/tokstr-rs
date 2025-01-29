@@ -5,6 +5,7 @@ mod models;
 mod utils;
 mod download;
 
+use std::net::TcpListener;
 use axum::{
     routing::{get, post},
     Router,
@@ -34,6 +35,8 @@ async fn main() {
     init_logger_once();
 
 
+
+
     let relays = vec![
         "wss://relay.damus.io".into(),
         "wss://relay.snort.social".into()
@@ -48,7 +51,6 @@ async fn main() {
     let state = AppState::new(
         api,
         10,
-        2,
         60,
         1024 * 1024 * 1024,
     );
@@ -70,11 +72,15 @@ async fn main() {
         .route("/thumbnail", get(get_thumbnail))
         .with_state(state_shared.clone());
 
-    let addr = "127.0.0.1:3000".parse().unwrap();
-    info!("Listening on http://{}", addr);
+
+    let listener = TcpListener::bind(&"127.0.0.1:0".to_string()).unwrap();
+    let local_addr = listener.local_addr().unwrap();
+    info!("Starting server at {}", local_addr);
+
+    info!("Listening on http://{}", local_addr);
 
     // Run Axum server
-    axum_server::Server::bind(addr)
+    axum_server::Server::from_tcp(listener)
         .serve(app.into_make_service())
         .await
         .unwrap();
