@@ -36,6 +36,10 @@ pub(crate) fn write_image_to_jpeg(
 
 
 pub fn find_available_port() -> Result<TcpListener> {
+    if let Ok(listener) = TcpListener::bind(&"0.0.0.0:0".to_string()) {
+        return Ok(listener);
+    }
+
     for port in 8000..9000 {
         let addr = format!("127.0.0.1:{}", port);
         if let Ok(listener) = TcpListener::bind(&addr) {
