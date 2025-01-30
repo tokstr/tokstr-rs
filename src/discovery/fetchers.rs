@@ -2,10 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use nostr_sdk::{
-    Client, Filter, Kind, PublicKey, RelayPoolNotification,
-    SubscriptionId, ToBech32,
-};
+use nostr_sdk::{Client, Filter, FromBech32, Kind, PublicKey, RelayPoolNotification, SubscriptionId, ToBech32};
 use nostr_sdk::client::Error;
 use nostr_sdk::pool::Output;
 use tokio::sync::{mpsc::{self, UnboundedReceiver}, Mutex, MutexGuard};
@@ -71,19 +68,20 @@ impl ContentDiscovery {
                         {
                             // Parse into zero or more Videos
                             let videos = parse_event_as_video(&event);
-                            for video in videos {
-                                // Enrich with metadata
-                                if let Some(npub_str) = &video.user.npub {
+                            for mut video in videos {
+                                // Pull out the npub into a separate variable so we don’t keep an immutable reference to `video`
+                                let npub_opt = video.user.npub.clone();
+
+                                if let Some(npub_str) = npub_opt {
                                     maybe_fetch_and_set_metadata(
                                         cloned_.clone(),
-                                        npub_str,
+                                        &npub_str,
                                         &known_authors_bg,
-                                        &mut video.clone(),
-                                    )
-                                        .await;
+                                        &mut video,
+                                    ).await;
                                 }
 
-                                // Send final, enriched Video to the service
+                                // Now the immutable borrow is gone, so we can safely send `video`
                                 let _ = video_sender.send(video);
                             }
                         }
@@ -131,18 +129,15 @@ async fn maybe_fetch_and_set_metadata(
     };
 
     if let Some(user_data) = cached {
-        // Found in cache: just set it
         video.user = user_data;
         return;
     }
 
-    // Otherwise, we parse `npub_str` -> `PublicKey`. Try bech32 or hex:
-    let pubkey = match PublicKey::parse(npub_str)
-        .ok()
-        .or_else(|| PublicKey::from_hex(npub_str).ok())
+    let pubkey = match PublicKey::from_bech32(npub_str).ok()
+
     {
         Some(pk) => pk,
-        None => return, // cannot parse author
+        None => return
     };
 
     // Ephemeral fetch of kind = Metadata for that author, with 10s timeout
