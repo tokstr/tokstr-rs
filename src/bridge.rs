@@ -105,20 +105,6 @@ pub async fn ffi_get_discovered_videos() -> Vec<FfiVideoDownload> {
         .collect()
 }
 
-/// Initialize your app (logging, etc.). By default, flutter_rust_bridge calls this once at startup.
-#[flutter_rust_bridge::frb(init)]
-pub fn init_app() {
-    #[cfg(target_os = "android")]
-    android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Trace)
-            .with_filter(
-                android_logger::FilterBuilder::new()
-                    .parse("debug,mp4parse=off,nostr_relay_pool=off,hyper_util=off,reqwest=off")
-                    .build(),
-            ),
-    );
-}
 
 
 
