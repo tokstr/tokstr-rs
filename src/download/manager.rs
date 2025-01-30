@@ -492,6 +492,15 @@ async fn download_video_progressive(
     }
 
     debug!("Downloaded {} => size: {} bytes as {}", video.url, downloaded_bytes, video.id);
+    let final_size = downloaded_bytes;
+    {
+        let mut discovered = state.discovered_videos.lock().await;
+        if let Some(v) = discovered.get_mut(&video.id) {
+            if v.content_length.is_none() {
+                v.content_length = Some(final_size);
+            }
+        }
+    }
     Ok((video))
 }
 

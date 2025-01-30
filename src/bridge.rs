@@ -2,7 +2,7 @@ use std::sync::Arc;
 use once_cell::sync::OnceCell;
 
 use flutter_rust_bridge::frb;
-use log::{info, warn};
+use log::warn;
 use tokio::sync::Mutex;
 use crate::discovery::models::NostrVideo;
 use crate::service::main_axum::start_axum_server;
@@ -69,15 +69,8 @@ pub async fn ffi_get_discovered_videos() -> Vec<FfiVideoDownload> {
     discovered
         .iter()
         .map(|vid| {
-            let is_fully_downloaded = match vid.content_length {
-                Some(total) if total > 0 => vid.downloaded_bytes >= total,
-                _ => false,
-            };
-
-            let local_path = if is_fully_downloaded {
-                vid.local_path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string())
+            let local_path = if vid.local_path.is_some() && !vid.downloading {
+                Some(vid.local_path.as_ref().unwrap().to_string_lossy().to_string())
             } else {
                 None
             };
