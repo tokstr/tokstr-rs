@@ -13,13 +13,30 @@ use crate::service::state::AppState;
 static GLOBAL_STATE: OnceCell<Arc<AppState>> = OnceCell::new();
 
 // 2) Define an FFI-safe struct that mirrors `VideoDownload`
+
+#[derive(Debug, Clone)]
+pub struct FfiUserData{
+    pub npub: Option<String>,
+    pub name: Option<String>,
+    pub profile_picture: Option<String>,
+}
+#[derive(Debug, Clone)]
+pub struct FfiNostrVideo {
+    pub id: String,
+    pub user: FfiUserData,
+    pub title: String,
+    pub song_name: String,
+    pub likes: String,
+    pub comments: String,
+    pub url: String,
+}
 #[derive(Debug, Clone)]
 pub struct FfiVideoDownload {
     pub id: String,
     pub url: String,
     pub title: Option<String>,
     pub local_path: Option<String>,
-    pub nostr: NostrVideo
+    pub nostr: FfiNostrVideo
 }
 
 /// Start the Axum server and store the AppState in GLOBAL_STATE.
@@ -72,7 +89,19 @@ pub async fn ffi_get_discovered_videos() -> Vec<FfiVideoDownload> {
                 url: vid.url.clone(),
                 title: Some(vid.nostr.title.clone()),
                 local_path,
-                nostr: vid.nostr.clone(),
+                nostr: FfiNostrVideo{
+                    id: vid.nostr.id.to_string(),
+                    user: FfiUserData{
+                        npub: vid.nostr.user.npub.clone(),
+                        name: vid.nostr.user.name.clone(),
+                        profile_picture: vid.nostr.user.profile_picture.clone(),
+                    },
+                    title: vid.nostr.title.clone(),
+                    song_name: vid.nostr.song_name.clone(),
+                    likes: vid.nostr.likes.clone(),
+                    comments: vid.nostr.comments.clone(),
+                    url: vid.nostr.url.clone(),
+                },
             }
         })
         .collect()
