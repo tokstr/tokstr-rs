@@ -6,8 +6,7 @@ fn main() {
     let target = env::var("TARGET").expect("No TARGET env var");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("No OUT_DIR env var"));
 
-    let ffmpeg_libs_raw = env::var("FFMPEG_LIBS_PATH")
-        .unwrap_or_else(|_| "3rd-party/ffmpeg-libs".to_string());
+    let ffmpeg_libs_raw = env::var("FFMPEG_LIBS_PATH").unwrap();
     let ffmpeg_libs_candidate = PathBuf::from(&ffmpeg_libs_raw);
 
     if !ffmpeg_libs_candidate.exists() {
