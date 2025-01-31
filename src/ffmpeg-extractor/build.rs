@@ -6,14 +6,21 @@ fn main() {
     let target = env::var("TARGET").expect("No TARGET env var");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("No OUT_DIR env var"));
 
-    // Where to find your FFmpeg headers/libs (override with FFMPEG_LIBS_PATH if needed).
-    let ffmpeg_libs_path_raw = env::var("FFMPEG_LIBS_PATH")
+    let ffmpeg_libs_raw = env::var("FFMPEG_LIBS_PATH")
         .unwrap_or_else(|_| "3rd-party/ffmpeg-libs".to_string());
-    let ffmpeg_libs_path = PathBuf::from(&ffmpeg_libs_path_raw)
+    let ffmpeg_libs_candidate = PathBuf::from(&ffmpeg_libs_raw);
+
+    if !ffmpeg_libs_candidate.exists() {
+        panic!("FFMPEG_LIBS_PATH does not exist: {}", ffmpeg_libs_candidate.display());
+    }
+
+    // If you truly need canonicalize afterward, do it here:
+    let ffmpeg_libs_path = ffmpeg_libs_candidate
         .canonicalize()
         .expect("Could not canonicalize FFMPEG_LIBS_PATH");
 
     println!("cargo:warning=Using FFMPEG_LIBS_PATH = {}", ffmpeg_libs_path.display());
+
 
     // 1) Android
     if target.contains("android") {
